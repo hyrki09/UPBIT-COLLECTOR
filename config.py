@@ -4,4 +4,5 @@ import pyupbit
 TICKERS = pyupbit.get_tickers(fiat="KRW")
 
 # 저장 파일명
-OUTPUT_FILE = "price_data.csv"
+# OUTPUT_FILE = "price_data.csv"
+# INTERVAL = 60 # 5분단위 수집

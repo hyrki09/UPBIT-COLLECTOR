@@ -2,33 +2,33 @@ import pyupbit
 import pandas as pd
 from datetime import datetime
 import time
-from config import TICKERS, OUTPUT_FILE
+from config import TICKERS
 
 
-# 수집할 코인 목록
-records = []
-for ticker in TICKERS:
+#* 특정 코인의 과거 데이터 가져오기
+def get_ohlcv(ticker, interval="day", count=365):
     try:
-        price = pyupbit.get_current_price(ticker)
-
-        records.append({
-            "timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # 현재 시간
-            "ticker":ticker,
-            "price":int(price)
-        })
-        print(f"[{ticker}] {int(price):,}원")
+        df = pyupbit.get_ohlcv(ticker, interval=interval, count=count)
+        print(df)
+        df['ticker'] = ticker
+        return df
     except Exception as e:
-        # 에러가 나면 여기서 처리하고 다음 코인으로 패스
-        print(f"[ERROR] {ticker} 수집 실패 : {e}")
+        print(f"[ERROR] {ticker} 데이터 수집 실패 : {e}")
+        return None
 
-    time.sleep(0.1)
+#* 코인별로 CSV 저장
+def save_ohlcv(ticker, df):
+    if df is not None:
+        df.to_csv(f"data/{ticker}.csv")
+        print(f"{ticker} 저장완료 ({len(df)}행)")
 
-# records에 값이 있을 때만 CSV 저장
-if records:
-    df = pd.DataFrame(records) # 리스트 -> 표 형태 전환
-    df.to_csv(OUTPUT_FILE, index=False) # CSV 파일로 저장
-    print(f"\n {len(records)}개 저장완료!")
-else:
-    print("\n 저장할 데이터가 없습니다.")
-    
+if __name__ == "__main__":
+    import os
+    os.makedirs("data", exist_ok="True")
 
+    print("=====과거 데이터 수집 시작=====")
+    for ticker in TICKERS:
+        df = get_ohlcv(ticker)
+        save_ohlcv(ticker, df)
+        time.sleep(0.1)
+    print("\n 전체수집완료")   

@@ -27,18 +27,76 @@ def generate_signals(df, short=7, long=30):
 
     return df
 
+#* 수익률 계산
+def calculate_returns(df, initial_capital=1000000):
+    capital = initial_capital # 초기 자본
+    position = 0 # 보유코인 수량
+    buy_price = 0 # 매수가
+    trades = [] # 거래 기록
+
+    for i in range(len(df)):
+        signal = df['signal'].iloc[i]
+        price = df['close'].iloc[i]
+
+        # 매수 신호
+        if signal == 1 and position == 0:
+            position = capital / price
+            buy_price = price
+            capital = 0
+            trades.append({
+                'date' : df.index[i],
+                'action': '매수',
+                'price' : price,
+                'return' : None
+            })
+
+        # 매도 신호
+        elif signal == -1 and position > 0:
+            capital = position * price # 전액 매도
+            ret = (price - buy_price) / buy_price * 100  # 수익률
+            trades.append({
+                'date' : df.index[i],
+                'action' : '매도',
+                'price' : price,
+                'return' : round(ret, 2)
+            })
+            position = 0
+
+    # 현재 보유 중이면 현재가로 평가
+    if position > 0:
+        capital = position * df['close'].iloc[-1]
+
+    total_return = (capital - initial_capital) / initial_capital * 100
+
+    return trades, round(total_return, 2)
+
+
 if __name__ == "__main__":
     ticker = "KRW-BTC"
     df = load_data(ticker)
     df = add_moving_averages(df)
     df = generate_signals(df)
 
-    # 매수/매도 신호만 출력
-    signals = df[df['signal'] != 0][['close', 'signal']]
-    signals['action'] = signals['signal'].map({1: '📈 매수', -1: '📉 매도'})
-    print(f"\n=== {ticker} 골든크로스 신호 ===")
-    print(signals[['close', 'action']])
-    print(f"\n총 {len(signals)}번 신호 발생")
+    trades, total_return =  calculate_returns(df)
+
+    for t in trades:
+        if t['action'] == '매도':
+            print(f"{t['date'].date()} 매도 | 가격: {int(t['price']):,}원 | 수익률: {t['return']}%")
+        else:
+            print(f"{t['date'].date()} 매수 | 가격: {int(t['price']):,}원")
+    
+    print(f"\n💰 최종 수익률: {total_return}%")
+    print(f"📊 Buy & Hold 수익률: {round((df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100, 2)}%")
+            
+
+    # # 매수/매도 신호만 출력
+    # signals = df[df['signal'] != 0][['close', 'signal']] # True인 행만 필터링해서 가져오기
+    # signals['action'] = signals['signal'].map({1: '📈 매수', -1: '📉 매도'})
+    # print(f"\n=== {ticker} 골든크로스 신호 ===")
+    # print(signals[['close', 'action']])
+    # print(f"\n총 {len(signals)}번 신호 발생")
+
+
 
             
 

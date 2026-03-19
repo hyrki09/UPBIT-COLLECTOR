@@ -1,4 +1,7 @@
 import pandas as pd
+import matplotlib.pyplot as plt
+plt.rcParams['font.family'] = 'Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] = False
 
 #* CSV에서 데이터 불러오기
 def load_data(ticker):
@@ -70,6 +73,57 @@ def calculate_returns(df, initial_capital=1000000):
 
     return trades, round(total_return, 2)
 
+#* 백테스트 결과 시각화
+def plot_backtest(df, trades, initial_capital=1000000):
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
+
+    # 1. 가격 차트 + 매수/매도 시점
+    ax1.plot(df.index, df['close'], label='종가', color='blue', alpha=0.5)
+    ax1.plot(df.index, df['ma7'], label='5일 이동평균', color='red')
+    ax1.plot(df.index, df['ma30'], label='10일 이동평균', color='black')
+
+    for t in trades:
+        if t['action'] == '매수':
+            ax1.axvline(t['date'], color='green', alpha=0.7, linestyle='--')
+            ax1.annotate('매수', xy=(t['date'], t['price']), color='green', fontsize=8)
+        else:
+            ax1.axvline(t['date'], color='red', alpha=0.7, linestyle='--')
+            ax1.annotate('매도', xy=(t['date'], t['price']), color='red', fontsize=8)
+    
+    ax1.set_title('가격 차트 + 매수/매도 시점')
+    ax1.legend() # 차트 오른쪽 위에 있는 범례 표시 , # "종가, 5일 이동평균, 10일 이동평균..."
+    ax1.grid(True)
+
+    # 2. 자본금 변화
+    capital_history = [initial_capital]
+    capital = initial_capital
+    position = 0
+
+    for i in range(len(df)):
+        signal = df['signal'].iloc[i]
+        price = df['close'].iloc[i]
+
+        if signal == 1 and position == 0:
+            position = capital / price
+            capital = 0
+        elif signal == -1 and position > 0:
+            capital = price * position
+            position = 0
+
+        if position > 0:
+            capital_history.append(position * price)
+        else:
+            capital_history.append(capital)
+
+    ax2.plot(df.index, capital_history[:len(df)], label='자본금', color='green')
+    ax2.axhline(initial_capital, color='gray', linestyle='--', label='초기자본')
+    ax2.set_title('자본금 변화')
+    ax2.legend()
+    ax2.grid(True)
+
+    plt.tight_layout() # 차트들이 서로 겹치지 않게 자동으로 간격 조정
+    plt.show()
+
 
 if __name__ == "__main__":
     ticker = "KRW-BTC"
@@ -88,6 +142,8 @@ if __name__ == "__main__":
     print(f"\n💰 최종 수익률: {total_return}%")
     print(f"📊 Buy & Hold 수익률: {round((df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100, 2)}%")
             
+
+    plot_backtest(df, trades)
 
     # # 매수/매도 신호만 출력
     # signals = df[df['signal'] != 0][['close', 'signal']] # True인 행만 필터링해서 가져오기

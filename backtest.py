@@ -127,23 +127,49 @@ def plot_backtest(df, trades, initial_capital=1000000):
 
 if __name__ == "__main__":
     ticker = "KRW-BTC"
-    df = load_data(ticker)
-    df = add_moving_averages(df)
-    df = generate_signals(df)
+    df_origin = load_data(ticker)
 
-    trades, total_return =  calculate_returns(df)
+    strategies = [
+        (5, 20),    # 단기: 5일, 장기: 20일
+        (7, 30),    # 단기: 7일, 장기: 30일
+        (10, 60),    # 단기: 10일, 장기: 60일
+        (20, 120),    # 단기: 20일, 장기: 120일
+    ]
 
-    for t in trades:
-        if t['action'] == '매도':
-            print(f"{t['date'].date()} 매도 | 가격: {int(t['price']):,}원 | 수익률: {t['return']}%")
-        else:
-            print(f"{t['date'].date()} 매수 | 가격: {int(t['price']):,}원")
+    print(f"======== {ticker} 전략 비교 =========\n")
+
+    best_strategy = None
+    best_return = -999
+
+    for short, long in strategies:
+        df = df_origin.copy()
+        df = add_moving_averages(df, short, long)
+        df = generate_signals(df, short, long)
+        trades, total_return =  calculate_returns(df)
+
+        # buy &
+        bnh = round((df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100, 2)
+        print(f"MA{short} vs MA{long} | 수익률: {total_return}% | 거래횟수: {len(trades)}번 | Buy&Hold: {bnh}%")
+
+        if total_return > best_return:
+            best_return = total_return
+            best_strategy = (short, long)
+
+    print(f"\n🏆 최고 전략: MA{best_strategy[0]} vs MA{best_strategy[1]} | 수익률: {best_return}%")
+
+
+
+    # for t in trades:
+    #     if t['action'] == '매도':
+    #         print(f"{t['date'].date()} 매도 | 가격: {int(t['price']):,}원 | 수익률: {t['return']}%")
+    #     else:
+    #         print(f"{t['date'].date()} 매수 | 가격: {int(t['price']):,}원")
     
-    print(f"\n💰 최종 수익률: {total_return}%")
-    print(f"📊 Buy & Hold 수익률: {round((df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100, 2)}%")
+    # print(f"\n💰 최종 수익률: {total_return}%")
+    # print(f"📊 Buy & Hold 수익률: {round((df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100, 2)}%")
             
 
-    plot_backtest(df, trades)
+    # plot_backtest(df, trades)
 
     # # 매수/매도 신호만 출력
     # signals = df[df['signal'] != 0][['close', 'signal']] # True인 행만 필터링해서 가져오기

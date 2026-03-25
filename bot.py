@@ -21,7 +21,7 @@ def get_balance(upbit):
     # 보유 코인 조회
     balances = upbit.get_balances()
     for b in balances:
-        print(b)
+        # print(b)
         if b['currency'] != 'KRW' and float(b['balance']) > 0:
             try:
                 ticker = f"KRW-{b['currency']}"
@@ -58,15 +58,63 @@ def check_strategy(ticker, short=5, long=20):
 
     return golden_cross
 
+#* 시장가 매수
+def buy_market_order(upbit, ticker, amount):
+    try:
+        result = upbit.buy_market_order(ticker, amount)
+        print(f"✅ 매수 완료 | {ticker} | {amount:,}원")
+        return result
+    except Exception as e:
+        print(f"❌ 매수 실패 | {ticker} | {e}")
+        return None
+
+#* 시장가 매도 (전량)
+def sell_market_order(upbit, ticker):
+    try:
+        balance = upbit.get_balance(ticker.split('-')[1])
+        if balance > 0:
+            result = upbit.sell_market_order(ticker, balance)
+            print(f"매도 완료 | {ticker} | {balance}개")
+            return result
+        else:
+            print(f"보유 수량 없음 | {ticker}")
+            return None
+    except Exception as e:
+        print(f"매도 실패 | {ticker} | {e}")
+        return None
+
+#* 현재 수익률 조회
+def get_current_profit(upbit, ticker):
+    try:
+        balances = upbit.get_balances()
+        print(balances)
+        for b in balances:
+            if b['currency'] == ticker.split('-')[1]:
+                avg_buy_price = float(b['avg_buy_price']) # 평균 매수가
+
+                if avg_buy_price == 0:
+                    print(f"{ticker} 평균 매수가 없음 (에어드랍 또는 입금된 코인)")
+                    return 0
+                current_price = pyupbit.get_current_price(ticker)
+                profit = (current_price - avg_buy_price) / avg_buy_price * 100
+                print(f"{ticker} 수익률 : {round(profit, 2)}")
+                return profit
+    except Exception as e:
+        print(f"[ERROR] {e}")
+    return 0
+
 if __name__ == "__main__":
     upbit = connect_upbit()
     if upbit:
         get_balance(upbit)
 
         # 주요 코인 전략 확인
-        print("\n=== 전략 스캔 ===")
-        watchlist = ["KRW-BTC", "KRW-ETH", "KRW-XRP"]
-        for ticker in watchlist:
-            result = check_strategy(ticker)
-            print(f"{ticker} : {'골든크로스!' if result else '대기중'}")
-            time.sleep(0.1)
+        # print("\n=== 전략 스캔 ===")
+        # watchlist = ["KRW-BTC", "KRW-ETH", "KRW-XRP"]
+        # for ticker in watchlist:
+        #     result = check_strategy(ticker)
+        #     print(f"{ticker} : {'골든크로스!' if result else '대기중'}")
+        #     time.sleep(0.1)
+
+        print("\n === 수익률 확인 ===")
+        get_current_profit(upbit, "KRW-VTHO")

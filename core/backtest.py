@@ -51,82 +51,151 @@ class Backtest:
         df = self.strategy.prepare(df)
 
         capital = self.initial_capital
-        position = 0
-        buy_price = 0
-        buy_target = None
-        sell_target = None
-        stop_target = None
+        position = None
+        buy_stage = 0
+        base_buy_price = None
+        prev_buy_price = None  # 직전 매수가 (방식 2)
         trades = []
 
         for i in range(1, len(df)):
             current_df = df.iloc[:i+1]
-            candle = df.iloc[i]  # 오늘 캔들
+            candle = df.iloc[i]
 
-            if position == 0:
-                buy_target = self.strategy.get_buy_price(current_df)
+            # 매수 단계
+            if buy_stage < len(self.strategy.buy_stages):
 
-                if buy_target:
-                    # 시가가 이미 매수목표가 이하면 시가에 체결
+                # 1차 매수: 전략 신호 확인
+                if buy_stage == 0:
+                    base_price = self.strategy.get_buy_price(current_df)
+                    if base_price:
+                        base_buy_price = base_price
+                        prev_buy_price = base_price  # 직전 매수가 초기화
+
+                # 매수 진행
+                if base_buy_price:
+                    # 방식 2: 직전 매수가 기준으로 목표가 계산
+                    buy_target = self.strategy.get_stage_buy_price(
+                        prev_buy_price, buy_stage)
+                    buy_ratio = self.strategy.get_stage_buy_ratio(buy_stage)
+                    buy_amount = self.initial_capital * buy_ratio
+
+                    actual_buy = None
                     if candle['open'] <= buy_target:
                         actual_buy = candle['open']
-                    # 저가 <= 매수목표가 <= 고가면 목표가에 체결
                     elif candle['low'] <= buy_target <= candle['high']:
                         actual_buy = buy_target
-                    else:
-                        actual_buy = None
 
-                    if actual_buy:
-                        position = capital / actual_buy
-                        buy_price = actual_buy
-                        capital = 0
-                        sell_target = self.strategy.get_sell_price(buy_price)
-                        stop_target = self.strategy.get_stop_loss_price(buy_price)
+                    if actual_buy and capital >= buy_amount:
+                        qty = buy_amount / actual_buy
+                        capital -= buy_amount
+                        prev_buy_price = actual_buy  # 직전 매수가 업데이트
 
+                        if position is None:
+                            position = {
+                                'total_qty': qty,
+                                'invested': buy_amount,
+                                'avg_buy_price': actual_buy,
+                                'sell_stage': 0
+                            }
+                        else:
+                            # 추가 매수 → 평균 매수가 재계산
+                            position['total_qty'] += qty
+                            position['invested'] += buy_amount
+                            position['avg_buy_price'] = (
+                                position['invested'] / position['total_qty']
+                            )
+
+                        buy_stage += 1
                         trades.append({
                             'date': df.index[i],
-                            'action': '매수',
-                            'price': int(buy_price),
+                            'action': f'{buy_stage}차 매수',
+                            'price': int(actual_buy),
                             'profit': None
                         })
 
-            elif position > 0:
-                # 시가가 이미 매도목표가 이상 → 시가에 체결 (갭 상승)
-                if candle['open'] >= sell_target:
-                    actual_sell = candle['open']
+            # 매도 단계
+            if position:
+                sell_stage = position['sell_stage']
 
-                # 저가 <= 매도목표가 <= 고가 → 목표가에 체결
-                elif candle['low'] <= sell_target <= candle['high']:
-                    actual_sell = sell_target
+                if sell_stage < len(self.strategy.sell_stages):
+                    avg_price = position['avg_buy_price']
 
-                else:
+                    # sell_stage에 따라 손절가 재계산
+                    stop_target = self.strategy.get_stop_loss_price(
+                        avg_price,
+                        current_price=candle['close'],
+                        sell_stage=sell_stage
+                    )
+                    sell_target = self.strategy.get_sell_price(avg_price, sell_stage)
+                    sell_ratio = self.strategy.get_stage_sell_ratio(sell_stage)
+
                     actual_sell = None
+                    action = None
 
-                # 손절: 저가가 손절가 이하 → 손절가에 체결
-                if candle['low'] <= stop_target and actual_sell is None:
-                    actual_sell = stop_target
+                    if candle['open'] >= sell_target:
+                        actual_sell = candle['open']
+                        action = '익절'
+                    elif candle['open'] <= stop_target:
+                        actual_sell = candle['open']
+                        action = '손절'
+                    elif candle['low'] <= sell_target <= candle['high']:
+                        actual_sell = sell_target
+                        action = '익절'
+                    elif candle['low'] <= stop_target:
+                        actual_sell = stop_target
+                        action = '손절'
 
-                if actual_sell:
-                    capital = position * actual_sell
-                    profit = (actual_sell - buy_price) / buy_price * 100
-                    action = '익절' if actual_sell >= buy_price else '손절'
-                    trades.append({
-                        'date': df.index[i],
-                        'action': action,
-                        'price': int(actual_sell),
-                        'profit': round(profit, 2)
-                    })
-                    position = 0
-                    sell_target = None
-                    stop_target = None
+                    if actual_sell:
+                        if action == '손절':
+                            # 전량 손절
+                            sell_qty = position['total_qty']
+                            capital += sell_qty * actual_sell
+                            profit = (actual_sell - avg_price) / avg_price * 100
+                            trades.append({
+                                'date': df.index[i],
+                                'action': f'{sell_stage + 1}차 손절',
+                                'price': int(actual_sell),
+                                'profit': round(profit, 2)
+                            })
+                            position = None
+                            base_buy_price = None
+                            prev_buy_price = None
+                            buy_stage = 0
 
-            # 현재 보유 중이면 현재가로 평가
-        if position > 0:
-            capital = position * df['close'].iloc[-1]
+                        else:
+                            # 분할 익절
+                            sell_qty = position['total_qty'] * sell_ratio
+                            capital += sell_qty * actual_sell
+                            profit = (actual_sell - avg_price) / avg_price * 100
+                            trades.append({
+                                'date': df.index[i],
+                                'action': f'{sell_stage + 1}차 익절',
+                                'price': int(actual_sell),
+                                'profit': round(profit, 2)
+                            })
+                            position['total_qty'] -= sell_qty
+                            position['invested'] = (
+                                position['total_qty'] * avg_price
+                            )
+                            position['sell_stage'] += 1
+
+                            # 모든 매도 완료
+                            if position['sell_stage'] >= len(self.strategy.sell_stages):
+                                if position['total_qty'] > 0:
+                                    capital += position['total_qty'] * actual_sell
+                                position = None
+                                base_buy_price = None
+                                prev_buy_price = None
+                                buy_stage = 0
+
+        # 보유 중인 포지션 현재가로 평가
+        if position:
+            capital += position['total_qty'] * df['close'].iloc[-1]
 
         total_return = (capital - self.initial_capital) / self.initial_capital * 100
         bnh = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100
 
-        sold_trades = [t for t in trades if t['action'] in ['익절', '손절']]
+        sold_trades = [t for t in trades if '익절' in t['action'] or '손절' in t['action']]
         win_trades = [t for t in sold_trades if t['profit'] > 0]
         win_rate = len(win_trades) / len(sold_trades) * 100 if sold_trades else 0
 
@@ -148,8 +217,8 @@ class Backtest:
         print(f"💵 초기자산: {int(self.initial_capital):,}원")
 
         for t in result['trades']:
-            if t['action'] == '매수':
-                print(f"{t['date'].date()} 매수 | {t['price']:,}원")
+            if '매수' in t['action']:  # ← '1차 매수', '2차 매수' 다 잡힘
+                print(f"{t['date'].date()} {t['action']} | {t['price']:,}원")
             else:
                 print(f"{t['date'].date()} {t['action']} | {t['price']:,}원 | 수익률: {t['profit']}%")
 
@@ -166,15 +235,14 @@ class Backtest:
 if __name__ == "__main__":
     from strategies.golden_cross import GoldenCrossStrategy
 
-    strategy = GoldenCrossStrategy(short=5, long=20,
-                                    profit_target=5.0, stop_loss=5.0)
+    strategy = GoldenCrossStrategy(short=5, long=20)  # profit_target, stop_loss 제거
     bt = Backtest(
         strategy=strategy,
         ticker="KRW-BTC",
         interval="day",
-        initial_capital=1000000,    # 초기자산 100만원
-        start_date="2025-01-01",    # 시작 날짜
-        end_date="2026-03-15"       # 마감 날짜
+        initial_capital=1000000,
+        start_date="2025-01-01",
+        end_date="2026-03-15"
     )
     result = bt.run()
     bt.print_result(result)

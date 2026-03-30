@@ -1,6 +1,7 @@
 import pyupbit
 import time
-import pandas as pd
+
+from datetime import datetime
 from config import ACCESS_KEY, SECRET_KEY
 
 #* 업비트 연결
@@ -103,6 +104,66 @@ def get_current_profit(upbit, ticker):
         print(f"[ERROR] {e}")
     return 0
 
+#* 자동매매 메인루프
+# budget : 1회 매수 금액 (원)
+# profit_target: 목표 수익률 (%)
+def run_bot(upbit, budget=10000, profit_target=5.0):
+    print("=== 자동매매 봇 시작 ===")
+    print(f"매수 예산: {budget:,}원 | 목표 수익률: {profit_target}%\n")
+
+    # 보유 중인 코인 추적
+    holding = {}  # {'KRW-BTC': {'buy_price': 100000, 'amount': 0.001}}
+
+    while True:
+        try:
+            # 1. 원화 잔고 확인
+            krw = upbit.get_balance("KRW")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 💰 잔고: {int(krw):,}원")
+
+            # 2. 보유 코인 수익률 확인 → 매도
+            for ticker in list(holding.keys()):
+                current_price = pyupbit.get_current_price(ticker)
+                buy_price = holding[ticker]['buy_price']
+                profit = (current_price - buy_price) / buy_price * 100
+
+                print(f"  📊 {ticker} 수익률: {round(profit, 2)}%")
+
+                # 목표 수익률 달성 시 매도
+                if profit >= profit_target:
+                    sell_market_order(upbit, ticker)
+                    del holding[ticker]
+                    print(f"  ✅ {ticker} 매도 완료! 수익률: {round(profit, 2)}%")
+
+                # 손절 -5% 시 매도
+                elif profit <= -5.0:
+                    sell_market_order(upbit, ticker)
+                    del holding[ticker]
+                    print(f"  🛑 {ticker} 손절 매도! 수익률: {round(profit, 2)}%")
+
+            # 3. 전략 스캔 → 매수
+            if krw >= budget:
+                tickers = pyupbit.get_tickers(fiat="KRW")
+                for ticker in tickers:
+                    if ticker in holding:  # 이미 보유 중이면 스킵
+                        continue
+
+                    if check_strategy(ticker):
+                        print(f"\n  📈 골든크로스 발생! {ticker}")
+                        result = buy_market_order(upbit, ticker, budget)
+                        if result:
+                            buy_price = pyupbit.get_current_price(ticker)
+                            holding[ticker] = {'buy_price': buy_price}
+                    
+                    time.sleep(0.1)  # Rate Limit 방지
+
+            print(f"  ⏳ 5분 대기 중...\n")
+            time.sleep(300)  # 5분 대기
+
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            time.sleep(60)  # 에러 시 1분 대기 후 재시작
+
+
 if __name__ == "__main__":
     upbit = connect_upbit()
     if upbit:
@@ -116,5 +177,13 @@ if __name__ == "__main__":
         #     print(f"{ticker} : {'골든크로스!' if result else '대기중'}")
         #     time.sleep(0.1)
 
-        print("\n === 수익률 확인 ===")
-        get_current_profit(upbit, "KRW-VTHO")
+        # print("\n === 수익률 확인 ===")
+        # get_current_profit(upbit, "KRW-VTHO")
+
+        
+        # ⚠️ 실제 매매 전 잔고 확인 필수!
+        print("\n⚠️ 자동매매를 시작합니다. 잔고를 확인하세요.")
+        print("시작하려면 Enter, 취소하려면 Ctrl+C")
+        input()
+        
+        run_bot(upbit, budget=10000, profit_target=5.0)

@@ -11,3 +11,6 @@ __pycache__/
 # 수집데이터
 *.csv
 data/
+
+# 거래로그
+*.log

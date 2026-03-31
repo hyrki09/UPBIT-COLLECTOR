@@ -32,6 +32,7 @@ class GoldenCrossStrategy(BaseStrategy):
 
     def prepare(self, df: pd.DataFrame) -> pd.DataFrame:
         """이동평균선 계산"""
+        df=df.copy()
         df[f'ma{self.short}'] = df['close'].rolling(self.short).mean()
         df[f'ma{self.long}'] = df['close'].rolling(self.long).mean()
         return df

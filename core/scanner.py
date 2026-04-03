@@ -26,7 +26,7 @@ class ScannerBot:
 
     def __init__(self, strategies: dict,
                  market_ticker: str = "KRW-BTC",
-                 scan_interval: int = 3600):
+                 scan_interval: int = 600):
         """
         strategies: 전략별 설정
         {
@@ -36,7 +36,7 @@ class ScannerBot:
             }
         }
         market_ticker: 시장 기준 티커 (글로벌 전제조건용)
-        scan_interval: 스캔 주기 (초) 기본 1시간
+        scan_interval: 스캔 주기 (초) 기본 10분
         """
         self.strategies = strategies
         self.market_ticker = market_ticker
@@ -161,6 +161,6 @@ if __name__ == "__main__":
     scanner = ScannerBot(
         strategies=strategies,
         market_ticker="KRW-BTC",
-        scan_interval=3600
+        scan_interval=300
     )
     scanner.run()

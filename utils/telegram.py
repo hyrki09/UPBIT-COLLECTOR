@@ -27,7 +27,6 @@ class TelegramNotifier:
                 "parse_mode": "HTML"  # HTML 형식 지원
             }
             response = requests.post(url, data=data)
-            print(response.json())
             return response.json()
         except Exception as e:
             print(f"텔레그램 전송 실패: {e}")

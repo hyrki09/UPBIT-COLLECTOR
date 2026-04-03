@@ -14,3 +14,6 @@ data/
 
 # 거래로그
 *.log
+
+# 관심종목 파일
+watchlist.json

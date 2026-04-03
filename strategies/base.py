@@ -22,7 +22,19 @@ class BaseStrategy(ABC):
         self.stop_loss_ratio = 0.05
 
     def prepare(self, df: pd.DataFrame) -> pd.DataFrame:
+        """데이터 전처리"""
         return df
+
+    def check_precondition(self, df: pd.DataFrame,
+                            market_df: pd.DataFrame = None) -> bool:
+        """
+        전제조건 확인
+        df: 현재 종목 데이터
+        market_df: 시장 기준 데이터 (예: BTC 데이터)
+        기본: 항상 True (전제조건 없음)
+        자식 클래스에서 오버라이드해서 사용
+        """
+        return True
 
     @abstractmethod
     def get_buy_price(self, df: pd.DataFrame):
@@ -30,11 +42,7 @@ class BaseStrategy(ABC):
         pass
 
     def get_stage_buy_price(self, prev_buy_price: float, stage: int = 0) -> float:
-        """
-        stage번째 매수 목표가 반환
-        방식 2: 직전 매수가 기준으로 계산
-        prev_buy_price: 직전 매수가
-        """
+        """직전 매수가 기준으로 stage번째 매수 목표가 반환"""
         offset = self.buy_stages[stage]['price_offset']
         return prev_buy_price * (1 + offset)
 
@@ -43,7 +51,7 @@ class BaseStrategy(ABC):
         return self.buy_stages[stage]['ratio']
 
     def get_sell_price(self, avg_buy_price: float, stage: int = 0) -> float:
-        """stage번째 매도 목표가 반환 (평균 매수가 기준)"""
+        """stage번째 매도 목표가 반환"""
         profit = self.sell_stages[stage]['profit']
         return avg_buy_price * (1 + profit)
 
@@ -54,10 +62,5 @@ class BaseStrategy(ABC):
     def get_stop_loss_price(self, buy_price: float,
                              current_price: float = None,
                              sell_stage: int = 0) -> float:
-        """
-        손절가 반환
-        sell_stage: 몇 차 익절했는지에 따라 손절가 변경
-        current_price: 현재가 (트레일링 스탑용)
-        기본: 매수가 기준 -stop_loss_ratio%
-        """
+        """손절가 반환"""
         return buy_price * (1 - self.stop_loss_ratio)

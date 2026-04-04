@@ -17,3 +17,6 @@ data/
 
 # 관심종목 파일
 watchlist.json
+
+# 내 전략 (비공개)
+strategies/down_coin.py

@@ -12,6 +12,7 @@ from core.backtest import Backtest
 from core.scanner import ScannerBot
 from core.bot import TradingBot
 from strategies.golden_cross import GoldenCrossStrategy
+from strategies.down_coin import DownCoinStrategy
 from utils.telegram import TelegramNotifier
 
 def update_data(tickers=None, intervals=["day"]):
@@ -95,43 +96,64 @@ def run_bot(strategies, budget=100000, max_holding=3, scan_interval=10):
 
 if __name__ == "__main__":
     # 전략 설정
-    strategy = GoldenCrossStrategy(short=5, long=20)
+    # strategy = GoldenCrossStrategy(short=5, long=20)
 
-    strategies = {
-        'golden_cross': {
-            'strategy': strategy,
-            'tickers': ["KRW-BTC", "KRW-ETH", "KRW-XRP",
-                       "KRW-SOL", "KRW-ADA", "KRW-DOGE"]
-        }
-    }
+    # strategies = {
+    #     'golden_cross': {
+    #         'strategy': strategy,
+    #         'tickers': ["KRW-BTC", "KRW-ETH", "KRW-XRP",
+    #                    "KRW-SOL", "KRW-ADA", "KRW-DOGE"]
+    #     }
+    # }
 
-    # 실행 모드 선택
-    print("=== 업비트 자동매매 ===")
-    print("1. 데이터 업데이트")
-    print("2. 백테스트")
-    print("3. 스캐너 봇")
-    print("4. 트레이딩 봇")
-    mode = input("선택: ")
+    # # 실행 모드 선택
+    # print("=== 업비트 자동매매 ===")
+    # print("1. 데이터 업데이트")
+    # print("2. 백테스트")
+    # print("3. 스캐너 봇")
+    # print("4. 트레이딩 봇")
+    # mode = input("선택: ")
 
-    if mode == "1":
-        update_data()
+    # if mode == "1":
+    #     update_data()
 
-    elif mode == "2":
-        run_backtest(
-            ticker="KRW-BTC",
-            strategy=strategy,
-            initial_capital=1000000,
-            start_date="2025-01-01",
-            end_date="2026-03-15"
-        )
+    # elif mode == "2":
+    #     run_backtest(
+    #         ticker="KRW-BTC",
+    #         strategy=strategy,
+    #         initial_capital=1000000,
+    #         start_date="2025-01-01",
+    #         end_date="2026-03-15"
+    #     )
 
-    elif mode == "3":
-        run_scanner(strategies)
+    # elif mode == "3":
+    #     run_scanner(strategies)
 
-    elif mode == "4":
-        run_bot(
-            strategies={'golden_cross': strategy},
-            budget=10000,
-            max_holding=3,
-            scan_interval=10
-        )
+    # elif mode == "4":
+    #     run_bot(
+    #         strategies={'golden_cross': strategy},
+    #         budget=10000,
+    #         max_holding=3,
+    #         scan_interval=10
+    #     )
+
+    strategy = DownCoinStrategy(ma_period=10, envelope=0.10, stage_ratio=0.05)
+
+    run_backtest(
+        ticker="KRW-XRP",
+        strategy=strategy,
+        initial_capital=1000000,
+        start_date="2025-01-01",
+        end_date="2026-03-15"
+    )
+
+    tickers = ["KRW-XRP", "KRW-ETH", "KRW-SOL", 
+           "KRW-ADA", "KRW-DOGE", "KRW-LINK"]
+
+    compare_tickers(
+        tickers=tickers,
+        strategy=strategy,
+        initial_capital=1000000,
+        start_date="2025-01-01",
+        end_date="2026-03-15"
+    )

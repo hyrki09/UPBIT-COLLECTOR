@@ -85,27 +85,44 @@ class ScannerBot:
 
                     df = strategy.prepare(df)
 
-                    # 전제조건 확인 (글로벌 + 종목별)
+                    # 전제조건 확인
                     if not strategy.check_precondition(df, market_df):
-                        continue  # 전제조건 불충족 → 스킵
+                        continue
 
-                    # 매수 목표가 계산
-                    buy_price = strategy.get_buy_price(df)
+                    current_price = pyupbit.get_current_price(ticker)
 
+                    # 매수 조건 충족 → 즉시 매수 가능
+                    buy_price = strategy.get_buy_price(df, current_price)
                     if buy_price:
-                        current_price = pyupbit.get_current_price(ticker)
                         diff = (current_price - buy_price) / buy_price * 100
-
                         watchlist[strategy_name].append({
                             'ticker': ticker,
                             'buy_price': round(buy_price, 0),
                             'current_price': current_price,
-                            'diff': round(diff, 2)
+                            'diff': round(diff, 2),
+                            'ready': True
                         })
-                        logger.info(f"  📌 {ticker} 발견! "
-                                   f"목표가: {int(buy_price):,}원 | "
-                                   f"현재가: {int(current_price):,}원 | "
-                                   f"차이: {round(diff, 2)}%")
+                        logger.info(f"  ✅ {ticker} 매수 조건 충족! "
+                                f"목표가: {int(buy_price):,}원 | "
+                                f"현재가: {int(current_price):,}원")
+
+                    # 관심종목 조건 확인 (전략에서 정의!)
+                    elif strategy.is_watchable(df, current_price):
+                        # get_buy_price(df) → 종가 기준 목표가 계산
+                        buy_price = strategy.get_buy_price(df)
+                        if buy_price:
+                            diff = (current_price - buy_price) / buy_price * 100
+                            watchlist[strategy_name].append({
+                                'ticker': ticker,
+                                'buy_price': round(buy_price, 0),
+                                'current_price': current_price,
+                                'diff': round(diff, 2),
+                                'ready': False
+                            })
+                            logger.info(f"  📌 {ticker} 관심종목 등록! "
+                                    f"목표가: {int(buy_price):,}원 | "
+                                    f"현재가: {int(current_price):,}원 | "
+                                    f"차이: {round(diff, 2)}%")
 
                     time.sleep(0.1)
 
@@ -117,11 +134,21 @@ class ScannerBot:
 
             # 텔레그램 알림
             if watchlist[strategy_name]:
-                msg = f"📌 [{strategy_name}] 관심종목 {len(watchlist[strategy_name])}개 발견!\n"
-                for item in watchlist[strategy_name]:
-                    msg += (f"  {item['ticker']} | "
-                           f"목표가: {int(item['buy_price']):,}원 | "
-                           f"차이: {item['diff']}%\n")
+                ready_list = [i for i in watchlist[strategy_name] if i.get('ready')]
+                watch_list = [i for i in watchlist[strategy_name] if not i.get('ready')]
+
+                msg = f"📌 [{strategy_name}] 관심종목 {len(watchlist[strategy_name])}개\n"
+
+                if ready_list:
+                    msg += f"\n✅ 즉시 매수 가능 ({len(ready_list)}개)\n"
+                    for item in ready_list:
+                        msg += f"  {item['ticker']} | 목표가: {int(item['buy_price']):,}원\n"
+
+                if watch_list:
+                    msg += f"\n👀 모니터링 ({len(watch_list)}개)\n"
+                    for item in watch_list:
+                        msg += f"  {item['ticker']} | 차이: {item['diff']}%\n"
+
                 notifier.send(msg)
 
         watchlist['updated_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -37,8 +37,12 @@ class GoldenCrossStrategy(BaseStrategy):
         df[f'ma{self.long}'] = df['close'].rolling(self.long).mean()
         return df
 
-    def get_buy_price(self, df: pd.DataFrame):
-        """골든크로스 발생 시 단기 이동평균선 가격 반환"""
+    def get_buy_price(self, df: pd.DataFrame,
+                    current_price: float = None):
+        """
+        골든크로스 발생 시 단기 이동평균선 가격 반환
+        current_price는 사용 안 함 (일봉 종가 기준)
+        """
         df = self.prepare(df)
         today = df.iloc[-1]
         yesterday = df.iloc[-2]

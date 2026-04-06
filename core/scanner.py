@@ -5,10 +5,9 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pyupbit
-import pandas as pd 
+import pandas as pd
 import json
 import time
-import os
 from datetime import datetime
 from strategies.base import BaseStrategy
 from utils.logger import Logger
@@ -91,38 +90,31 @@ class ScannerBot:
 
                     current_price = pyupbit.get_current_price(ticker)
 
-                    # 매수 조건 충족 → 즉시 매수 가능
-                    buy_price = strategy.get_buy_price(df, current_price)
-                    if buy_price:
-                        diff = (current_price - buy_price) / buy_price * 100
-                        watchlist[strategy_name].append({
-                            'ticker': ticker,
-                            'buy_price': round(buy_price, 0),
-                            'current_price': current_price,
-                            'diff': round(diff, 2),
-                            'ready': True
-                        })
-                        logger.info(f"  ✅ {ticker} 매수 조건 충족! "
-                                f"목표가: {int(buy_price):,}원 | "
-                                f"현재가: {int(current_price):,}원")
+                    # 관심종목 조건 확인 (전략에서 정의)
+                    if not strategy.is_watchable(df, current_price):
+                        continue
 
-                    # 관심종목 조건 확인 (전략에서 정의!)
-                    elif strategy.is_watchable(df, current_price):
-                        # get_buy_price(df) → 종가 기준 목표가 계산
-                        buy_price = strategy.get_buy_price(df)
-                        if buy_price:
-                            diff = (current_price - buy_price) / buy_price * 100
-                            watchlist[strategy_name].append({
-                                'ticker': ticker,
-                                'buy_price': round(buy_price, 0),
-                                'current_price': current_price,
-                                'diff': round(diff, 2),
-                                'ready': False
-                            })
-                            logger.info(f"  📌 {ticker} 관심종목 등록! "
-                                    f"목표가: {int(buy_price):,}원 | "
-                                    f"현재가: {int(current_price):,}원 | "
-                                    f"차이: {round(diff, 2)}%")
+                    # 매수 목표가 계산
+                    buy_price = strategy.get_buy_price(df)
+
+                    # 지정가 주문 조건 확인
+                    ready = strategy.is_ready_to_buy(df, current_price)
+
+                    diff = (current_price - buy_price) / buy_price * 100
+
+                    watchlist[strategy_name].append({
+                        'ticker': ticker,
+                        'buy_price': round(buy_price, 0),
+                        'current_price': current_price,
+                        'diff': round(diff, 2),
+                        'ready': ready  # True: 즉시 주문, False: 모니터링
+                    })
+
+                    status = "✅ 즉시 주문" if ready else "📌 모니터링"
+                    logger.info(f"  {status} | {ticker} | "
+                               f"목표가: {int(buy_price):,}원 | "
+                               f"현재가: {int(current_price):,}원 | "
+                               f"차이: {round(diff, 2)}%")
 
                     time.sleep(0.1)
 
@@ -134,20 +126,24 @@ class ScannerBot:
 
             # 텔레그램 알림
             if watchlist[strategy_name]:
-                ready_list = [i for i in watchlist[strategy_name] if i.get('ready')]
-                watch_list = [i for i in watchlist[strategy_name] if not i.get('ready')]
+                ready_list = [i for i in watchlist[strategy_name] if i['ready']]
+                watch_list = [i for i in watchlist[strategy_name] if not i['ready']]
 
                 msg = f"📌 [{strategy_name}] 관심종목 {len(watchlist[strategy_name])}개\n"
 
                 if ready_list:
-                    msg += f"\n✅ 즉시 매수 가능 ({len(ready_list)}개)\n"
+                    msg += f"\n✅ 즉시 주문 가능 ({len(ready_list)}개)\n"
                     for item in ready_list:
-                        msg += f"  {item['ticker']} | 목표가: {int(item['buy_price']):,}원\n"
+                        msg += (f"  {item['ticker']} | "
+                               f"목표가: {int(item['buy_price']):,}원 | "
+                               f"차이: {item['diff']}%\n")
 
                 if watch_list:
                     msg += f"\n👀 모니터링 ({len(watch_list)}개)\n"
                     for item in watch_list:
-                        msg += f"  {item['ticker']} | 차이: {item['diff']}%\n"
+                        msg += (f"  {item['ticker']} | "
+                               f"목표가: {int(item['buy_price']):,}원 | "
+                               f"차이: {item['diff']}%\n")
 
                 notifier.send(msg)
 
@@ -175,7 +171,6 @@ class ScannerBot:
 
 if __name__ == "__main__":
     from strategies.golden_cross import GoldenCrossStrategy
-    import pandas as pd
 
     strategies = {
         'golden_cross': {
@@ -188,6 +183,6 @@ if __name__ == "__main__":
     scanner = ScannerBot(
         strategies=strategies,
         market_ticker="KRW-BTC",
-        scan_interval=300
+        scan_interval=600
     )
     scanner.run()

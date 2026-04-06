@@ -29,25 +29,47 @@ class BaseStrategy(ABC):
                             market_df: pd.DataFrame = None) -> bool:
         """
         전제조건 확인
-        df: 현재 종목 데이터
-        market_df: 시장 기준 데이터 (예: BTC 데이터)
-        기본: 항상 True (전제조건 없음)
-        자식 클래스에서 오버라이드해서 사용
+        기본: 항상 True
         """
         return True
 
     @abstractmethod
     def get_buy_price(self, df: pd.DataFrame,
-                    current_price: float = None):
+                      current_price: float = None) -> float:
         """
-        매수 목표가 반환
-        current_price 없으면 → 종가 기준 (백테스트)
-        current_price 있으면 → 현재가 기준 (실시간 봇)
-        None 반환 시 매수 안 함
+        1차 매수 목표가 반환
+        조건 체크 없이 목표가만 반환
         """
         pass
 
-    def get_stage_buy_price(self, prev_buy_price: float, stage: int = 0) -> float:
+    def is_watchable(self, df: pd.DataFrame,
+                     current_price: float) -> bool:
+        """
+        관심종목 조건
+        기본: 매수 목표가 10% 이내
+        전략마다 오버라이드 가능
+        """
+        buy_price = self.get_buy_price(df)
+        if not buy_price:
+            return False
+        diff = (current_price - buy_price) / buy_price * 100
+        return diff <= 10.0
+
+    def is_ready_to_buy(self, df: pd.DataFrame,
+                        current_price: float) -> bool:
+        """
+        지정가 주문 조건
+        기본: 매수 목표가 5% 이내
+        전략마다 오버라이드 가능
+        """
+        buy_price = self.get_buy_price(df)
+        if not buy_price:
+            return False
+        diff = (current_price - buy_price) / buy_price * 100
+        return diff <= 5.0
+
+    def get_stage_buy_price(self, prev_buy_price: float,
+                             stage: int = 0) -> float:
         """직전 매수가 기준으로 stage번째 매수 목표가 반환"""
         offset = self.buy_stages[stage]['price_offset']
         return prev_buy_price * (1 + offset)
@@ -56,7 +78,8 @@ class BaseStrategy(ABC):
         """stage번째 매수 비율 반환"""
         return self.buy_stages[stage]['ratio']
 
-    def get_sell_price(self, avg_buy_price: float, stage: int = 0) -> float:
+    def get_sell_price(self, avg_buy_price: float,
+                       stage: int = 0) -> float:
         """stage번째 매도 목표가 반환"""
         profit = self.sell_stages[stage]['profit']
         return avg_buy_price * (1 + profit)
@@ -70,17 +93,3 @@ class BaseStrategy(ABC):
                              sell_stage: int = 0) -> float:
         """손절가 반환"""
         return buy_price * (1 - self.stop_loss_ratio)
-    
-    # base.py에 추가
-    def is_watchable(self, df: pd.DataFrame,
-                    current_price: float) -> bool:
-        """
-        관심종목 등록 조건
-        기본: 매수 목표가 10% 이내
-        전략마다 오버라이드 가능
-        """
-        buy_price = self.get_buy_price(df)
-        if buy_price is None:
-            return False
-        diff = (current_price - buy_price) / buy_price * 100
-        return diff <= 10.0  # 기본 10% 이내

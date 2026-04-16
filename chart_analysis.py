@@ -9,12 +9,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
-                        interval="day", start_date=None, end_date=None):
+                        interval="day", start_date=None, end_date=None,
+                        trades=None):  # ← trades 파라미터 추가
     """
-    캔들차트 + 이평선 + 엔벨로프
-    좌우 스크롤 + 확대/축소 가능!
+    캔들차트 + 이평선 + 엔벨로프 + 백테스트 매수/매도 시점
     """
-    # CSV에서 데이터 불러오기
     path = f"data/{interval}/{ticker}.csv"
     if not os.path.exists(path):
         print(f"[ERROR] {path} 파일 없음")
@@ -23,8 +22,6 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
     df = pd.read_csv(path, index_col=0, parse_dates=True)
     df.columns = [c.lower() for c in df.columns]
 
-    print(df.columns)
-    # 날짜 필터링
     if start_date:
         df = df[df.index >= start_date]
     if end_date:
@@ -36,7 +33,7 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
     df['lower'] = df['ma'] * (1 - envelope)
     df['buy_target'] = df['lower'] * (1 - envelope)
 
-    # 서브플롯 생성 (위: 가격, 아래: 거래량)
+    # 서브플롯
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
@@ -53,8 +50,8 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
             low=df['low'],
             close=df['close'],
             name='캔들',
-            increasing_line_color='red',    # 양봉 빨강
-            decreasing_line_color='blue',   # 음봉 파랑
+            increasing_line_color='red',
+            decreasing_line_color='blue',
         ),
         row=1, col=1
     )
@@ -86,7 +83,7 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
     # 매수 목표가
     fig.add_trace(
         go.Scatter(x=df.index, y=df['buy_target'],
-                  name=f'매수목표가',
+                  name='매수목표가',
                   line=dict(color='purple', width=1, dash='dash')),
         row=1, col=1
     )
@@ -101,14 +98,86 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
         row=2, col=1
     )
 
-    # 레이아웃 설정
+    # 백테스트 거래 내역 표시
+    if trades:
+        buy_dates, buy_prices, buy_texts = [], [], []
+        sell_dates, sell_prices, sell_texts = [], [], []
+        stop_dates, stop_prices, stop_texts = [], [], []
+
+        for t in trades:
+            date = pd.Timestamp(t['date'])
+            print(date, type(date))
+            if '매수' in t['action']:
+                buy_dates.append(date)
+                buy_prices.append(t['price'])
+                buy_texts.append(f"{t['action']}<br>{t['price']:,}원")
+            elif '익절' in t['action']:
+                sell_dates.append(date)
+                sell_prices.append(t['price'])
+                sell_texts.append(
+                    f"{t['action']}<br>{t['price']:,}원<br>{t['profit']}%")
+            elif '손절' in t['action']:
+                stop_dates.append(date)
+                stop_prices.append(t['price'])
+                stop_texts.append(
+                    f"{t['action']}<br>{t['price']:,}원<br>{t['profit']}%")
+
+        # 매수 표시 (초록 삼각형 위)
+        if buy_dates:
+            fig.add_trace(
+                go.Scatter(
+                    x=buy_dates,
+                    y=[p * 0.97 for p in buy_prices],  # 캔들 아래
+                    mode='markers+text',
+                    marker=dict(symbol='triangle-up', size=12, color='green'),
+                    text=buy_texts,
+                    textposition='bottom center',
+                    name='매수',
+                    hovertext=buy_texts
+                ),
+                row=1, col=1
+            )
+
+        # 익절 표시 (빨간 삼각형 아래)
+        if sell_dates:
+            fig.add_trace(
+                go.Scatter(
+                    x=sell_dates,
+                    y=[p * 1.03 for p in sell_prices],  # 캔들 위
+                    mode='markers+text',
+                    marker=dict(symbol='triangle-down', size=12, color='red'),
+                    text=sell_texts,
+                    textposition='top center',
+                    name='익절',
+                    hovertext=sell_texts
+                ),
+                row=1, col=1
+            )
+
+        # 손절 표시 (검정 삼각형)
+        if stop_dates:
+            fig.add_trace(
+                go.Scatter(
+                    x=stop_dates,
+                    y=[p * 1.03 for p in stop_prices],
+                    mode='markers+text',
+                    marker=dict(symbol='triangle-down', size=12, color='black'),
+                    text=stop_texts,
+                    textposition='top center',
+                    name='손절',
+                    hovertext=stop_texts
+                ),
+                row=1, col=1
+            )
+
+    # 레이아웃
     fig.update_layout(
         title=f'{ticker} {ma_period}일 엔벨로프 ({int(envelope*100)}%)',
-        xaxis_rangeslider_visible=False,  # 하단 슬라이더 제거
+        xaxis_rangeslider_visible=False,
         height=800,
-        template='plotly_dark',  # 다크 테마
+        template='plotly_dark',
         xaxis2=dict(
-            rangeselector=dict(  # 기간 선택 버튼
+            rangeselector=dict(
                 buttons=[
                     dict(count=1, label="1M", step="month"),
                     dict(count=3, label="3M", step="month"),
@@ -119,21 +188,39 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
         )
     )
 
-    # 주말 제거 (코인은 365일이라 필요없지만 깔끔하게)
+    # fig.update_xaxes(type='category', tickangle=45)
     fig.update_xaxes(
-        type='category',  # x축 카테고리로 설정 (빈 날짜 제거)
-        tickangle=45
+        tickangle=45,
+        tickformat="%Y-%m-%d",  # 날짜 형식
+        type='date'
     )
-
-    fig.show()  # 브라우저에서 열림!
+    fig.show()
 
 
 if __name__ == "__main__":
+    # 백테스트 결과와 함께 차트 보기
+    from core.backtest import Backtest
+    from strategies.down_coin import DownCoinStrategy
+
+    strategy = DownCoinStrategy(ma_period=10, envelope=0.10, stage_ratio=0.05)
+    bt = Backtest(
+        strategy=strategy,
+        ticker="KRW-XRP",
+        interval="day",
+        initial_capital=1000000,
+        start_date="2025-01-01",
+        end_date="2026-04-05"
+    )
+    result = bt.run()
+    bt.print_result(result)
+
+    # 차트에 매수/매도 시점 표시
     draw_envelope_chart(
         ticker="KRW-XRP",
         ma_period=10,
         envelope=0.10,
         interval="day",
         start_date="2025-01-01",
-        end_date="2026-04-05"
+        end_date="2026-04-05",
+        trades=result['trades']  # ← 거래 내역 전달
     )

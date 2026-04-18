@@ -35,10 +35,13 @@ class BaseStrategy(ABC):
 
     @abstractmethod
     def get_buy_price(self, df: pd.DataFrame,
-                      current_price: float = None) -> float:
+                    stage: int = 0,
+                    prev_buy_price: float = None,
+                    current_price: float = None) -> float:
         """
-        1차 매수 목표가 반환
-        조건 체크 없이 목표가만 반환
+        stage번째 매수 목표가 반환
+        stage=0: 1차 매수가 (전략마다 다르게 구현)
+        stage=1,2: 직전 매수가 기준으로 계산
         """
         pass
 
@@ -68,11 +71,11 @@ class BaseStrategy(ABC):
         diff = (current_price - buy_price) / buy_price * 100
         return diff <= 5.0
 
-    def get_stage_buy_price(self, prev_buy_price: float,
-                             stage: int = 0) -> float:
-        """직전 매수가 기준으로 stage번째 매수 목표가 반환"""
-        offset = self.buy_stages[stage]['price_offset']
-        return prev_buy_price * (1 + offset)
+    # def get_stage_buy_price(self, prev_buy_price: float,
+    #                          stage: int = 0) -> float:
+    #     """직전 매수가 기준으로 stage번째 매수 목표가 반환"""
+    #     offset = self.buy_stages[stage]['price_offset']
+    #     return prev_buy_price * (1 + offset)
 
     def get_stage_buy_ratio(self, stage: int = 0) -> float:
         """stage번째 매수 비율 반환"""

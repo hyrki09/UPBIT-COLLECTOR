@@ -41,14 +41,12 @@ class Backtest:
         return df
 
     def run(self):
-        """백테스트 실행"""
         df = self.load_data()
         df = self.strategy.prepare(df)
 
         capital = self.initial_capital
         position = None
         buy_stage = 0
-        base_buy_price = None
         prev_buy_price = None
         trades = []
 
@@ -56,54 +54,67 @@ class Backtest:
             current_df = df.iloc[:i+1]
             candle = df.iloc[i]
 
-            # 매수 단계
-            if buy_stage < len(self.strategy.buy_stages):
+            is_bullish = candle['close'] >= candle['open']
 
-                if buy_stage == 0:
-                    base_price = self.strategy.get_buy_price(current_df)
-                    if base_price:
-                        base_buy_price = base_price
-                        prev_buy_price = base_price
+            if is_bullish:
+                price_sequence = [
+                    ('open', candle['open']),
+                    ('low',  candle['low']),
+                    ('high', candle['high']),
+                ]
+            else:
+                price_sequence = [
+                    ('open', candle['open']),
+                    ('high', candle['high']),
+                    ('low',  candle['low']),
+                ]
 
-                if base_buy_price:
-                    buy_target = self.strategy.get_stage_buy_price(
-                        prev_buy_price, buy_stage)
-                    buy_ratio = self.strategy.get_stage_buy_ratio(buy_stage)
+            for price_type, current_price in price_sequence:
+                just_bought = False  # 이 price_type에서 방금 매수했나
+
+                # 매수 체크
+                while buy_stage < len(self.strategy.buy_stages):
+
+                    # 1차, 2차, 3차 모두 get_buy_price로 통일!
+                    buy_target = self.strategy.get_buy_price(
+                        df=current_df,
+                        stage=buy_stage,
+                        prev_buy_price=prev_buy_price
+                    )
+
+                    # print(current_df)
+
 
                     if position is None:
+                        buy_ratio = self.strategy.get_stage_buy_ratio(buy_stage)
                         buy_amount = capital * buy_ratio
                     else:
                         buy_amount = position['stage_amount']
 
-                    actual_buy = None
-                    if candle['open'] <= buy_target:
-                        actual_buy = candle['open']
-                    elif candle['low'] <= buy_target <= candle['high']:
+                    if current_price <= buy_target and capital >= buy_amount:
                         actual_buy = buy_target
+                        if price_type == 'open':
+                            actual_buy = candle['open']
 
-                    if actual_buy and capital >= buy_amount:
                         qty = buy_amount / actual_buy
                         capital -= buy_amount
                         prev_buy_price = actual_buy
+                        just_bought = True
 
                         if position is None:
-                            # 1차 매수
                             position = {
                                 'total_qty': qty,
                                 'invested': buy_amount,
                                 'avg_buy_price': actual_buy,
                                 'sell_stage': 0,
-                                'stage_amount': buy_amount,
-                                'sell_base_qty': qty,  # ← 매도 기준 수량
+                                'sell_base_qty': qty,
+                                'stage_amount': buy_amount
                             }
                         else:
-                            # 2차, 3차 추가 매수
                             position['total_qty'] += qty
                             position['invested'] += buy_amount
                             position['avg_buy_price'] = (
-                                position['invested'] / position['total_qty']
-                            )
-                            # 추가 매수 시 매도 기준 수량 + 매도 차수 초기화!
+                                position['invested'] / position['total_qty'])
                             position['sell_base_qty'] = position['total_qty']
                             position['sell_stage'] = 0
 
@@ -114,86 +125,87 @@ class Backtest:
                             'price': int(actual_buy),
                             'profit': None
                         })
+                    else:
+                        break
 
-            # 매도 단계
-            if position:
-                sell_stage = position['sell_stage']
+                # 매도 체크
+                # 같은 price_type에서 매수했으면 스킵!
+                if position and not just_bought:
+                    sell_stage = position['sell_stage']
 
-                if sell_stage < len(self.strategy.sell_stages):
-                    avg_price = position['avg_buy_price']
+                    while sell_stage < len(self.strategy.sell_stages):
+                        avg_price = position['avg_buy_price']
+                        sell_target = self.strategy.get_sell_price(
+                            avg_price, sell_stage)
+                        stop_target = self.strategy.get_stop_loss_price(
+                            avg_price,
+                            current_price=current_price,
+                            sell_stage=sell_stage
+                        )
+                        sell_ratio = self.strategy.get_stage_sell_ratio(sell_stage)
 
-                    stop_target = self.strategy.get_stop_loss_price(
-                        avg_price,
-                        current_price=candle['close'],
-                        sell_stage=sell_stage
-                    )
-                    sell_target = self.strategy.get_sell_price(avg_price, sell_stage)
-                    sell_ratio = self.strategy.get_stage_sell_ratio(sell_stage)
+                        actual_sell = None
+                        action = None
 
-                    actual_sell = None
-                    action = None
+                        # 익절 (open, high에서만)
+                        if price_type in ['open', 'high']:
+                            if current_price >= sell_target:
+                                actual_sell = sell_target
+                                if price_type == 'open':
+                                    actual_sell = candle['open']
+                                action = '익절'
 
-                    if candle['open'] >= sell_target:
-                        actual_sell = candle['open']
-                        action = '익절'
-                    elif candle['open'] <= stop_target:
-                        actual_sell = candle['open']
-                        action = '손절'
-                    elif candle['low'] <= sell_target <= candle['high']:
-                        actual_sell = sell_target
-                        action = '익절'
-                    elif candle['low'] <= stop_target:
-                        actual_sell = stop_target
-                        action = '손절'
+                        # 손절 (open, low에서만)
+                        if price_type in ['open', 'low'] and not actual_sell:
+                            if current_price <= stop_target:
+                                actual_sell = stop_target
+                                if price_type == 'open':
+                                    actual_sell = candle['open']
+                                action = '손절'
 
-                    if actual_sell:
-                        if action == '손절':
-                            # 전량 손절
-                            sell_qty = position['total_qty']
-                            capital += sell_qty * actual_sell
-                            profit = (actual_sell - avg_price) / avg_price * 100
-                            trades.append({
-                                'date': df.index[i],
-                                'action': f'{sell_stage + 1}차 손절',
-                                'price': int(actual_sell),
-                                'profit': round(profit, 2)
-                            })
-                            position = None
-                            base_buy_price = None
-                            prev_buy_price = None
-                            buy_stage = 0
-
-                        else:
-                            # 분할 익절 (sell_base_qty 기준으로 계산!)
-                            sell_qty = position['sell_base_qty'] * sell_ratio
-                            
-                            # 실제 보유량보다 많으면 보유량만큼만
-                            sell_qty = min(sell_qty, position['total_qty'])
-                            
-                            capital += sell_qty * actual_sell
-                            profit = (actual_sell - avg_price) / avg_price * 100
-                            trades.append({
-                                'date': df.index[i],
-                                'action': f'{sell_stage + 1}차 익절',
-                                'price': int(actual_sell),
-                                'profit': round(profit, 2)
-                            })
-                            position['total_qty'] -= sell_qty
-                            position['invested'] = (
-                                position['total_qty'] * avg_price
-                            )
-                            position['sell_stage'] += 1
-
-                            # 모든 매도 완료
-                            if position['sell_stage'] >= len(self.strategy.sell_stages):
-                                if position['total_qty'] > 0:
-                                    capital += position['total_qty'] * actual_sell
+                        if actual_sell:
+                            if action == '손절':
+                                sell_qty = position['total_qty']
+                                capital += sell_qty * actual_sell
+                                profit = (actual_sell - avg_price) / avg_price * 100
+                                trades.append({
+                                    'date': df.index[i],
+                                    'action': f'{sell_stage + 1}차 손절',
+                                    'price': int(actual_sell),
+                                    'profit': round(profit, 2)
+                                })
                                 position = None
-                                base_buy_price = None
                                 prev_buy_price = None
                                 buy_stage = 0
+                                break
 
-        # 보유 중인 포지션 현재가로 평가
+                            else:
+                                sell_qty = position['sell_base_qty'] * sell_ratio
+                                sell_qty = min(sell_qty, position['total_qty'])
+                                capital += sell_qty * actual_sell
+                                profit = (actual_sell - avg_price) / avg_price * 100
+                                trades.append({
+                                    'date': df.index[i],
+                                    'action': f'{sell_stage + 1}차 익절',
+                                    'price': int(actual_sell),
+                                    'profit': round(profit, 2)
+                                })
+                                position['total_qty'] -= sell_qty
+                                position['invested'] = (
+                                    position['total_qty'] * avg_price)
+                                position['sell_stage'] += 1
+                                sell_stage += 1
+
+                                if position['sell_stage'] >= len(self.strategy.sell_stages):
+                                    if position['total_qty'] > 0:
+                                        capital += position['total_qty'] * actual_sell
+                                    position = None
+                                    prev_buy_price = None
+                                    buy_stage = 0
+                                    break
+                        else:
+                            break
+
         if position:
             capital += position['total_qty'] * df['close'].iloc[-1]
 
@@ -237,18 +249,49 @@ class Backtest:
         print(f"📊 Buy & Hold:  {result['bnh_return']}%")
         print(f"🎯 승률: {result['win_rate']}%")
 
+    def plot_result(self, result):
+        """백테스트 결과 차트"""
+        df = self.load_data()
+        df = self.strategy.prepare(df)
+
+        fig, ax = plt.subplots(figsize=(14, 6))
+
+        # 가격 차트
+        ax.plot(df.index, df['close'], label='종가', color='blue', alpha=0.5)
+
+        # 매수/매도 시점 표시
+        for t in result['trades']:
+            if '매수' in t['action']:
+                ax.axvline(t['date'], color='green', alpha=0.5, linestyle='--')
+                ax.annotate(t['action'], xy=(t['date'], t['price']),
+                        color='green', fontsize=8)
+            elif '익절' in t['action']:
+                ax.axvline(t['date'], color='red', alpha=0.5, linestyle='--')
+                ax.annotate(t['action'], xy=(t['date'], t['price']),
+                        color='red', fontsize=8)
+            elif '손절' in t['action']:
+                ax.axvline(t['date'], color='black', alpha=0.5, linestyle='--')
+
+        ax.set_title(f"{result['ticker']} {result['strategy']} 백테스트")
+        ax.set_ylabel("가격 (원)")
+        ax.legend()
+        ax.grid(True)
+        plt.tight_layout()
+        plt.show()
+
 
 if __name__ == "__main__":
     from strategies.golden_cross import GoldenCrossStrategy
+    from strategies.down_coin import DownCoinStrategy
 
-    strategy = GoldenCrossStrategy(short=5, long=20)
+    strategy = DownCoinStrategy(ma_period=10, envelope=0.10, stage_ratio=0.05)
     bt = Backtest(
         strategy=strategy,
-        ticker="KRW-BTC",
+        ticker="KRW-XRP",
         interval="day",
         initial_capital=1000000,
         start_date="2025-01-01",
-        end_date="2026-03-15"
+        end_date="2026-04-05"
     )
     result = bt.run()
     bt.print_result(result)

@@ -36,6 +36,7 @@ def run_backtest(ticker, strategy, interval="day",
     )
     result = bt.run()
     bt.print_result(result)
+    bt.plot_result(result)  # ← 추가
     return result
 
 def compare_tickers(tickers, strategy, interval="day",
@@ -144,16 +145,16 @@ if __name__ == "__main__":
         strategy=strategy,
         initial_capital=1000000,
         start_date="2025-01-01",
-        end_date="2026-03-15"
+        end_date="2026-04-06"
     )
 
-    tickers = ["KRW-XRP", "KRW-ETH", "KRW-SOL", 
-           "KRW-ADA", "KRW-DOGE", "KRW-LINK"]
+    # tickers = ["KRW-XRP", "KRW-ETH", "KRW-SOL", 
+    #        "KRW-ADA", "KRW-DOGE", "KRW-LINK"]
 
-    compare_tickers(
-        tickers=tickers,
-        strategy=strategy,
-        initial_capital=1000000,
-        start_date="2025-01-01",
-        end_date="2026-03-15"
-    )
+    # compare_tickers(
+    #     tickers=tickers,
+    #     strategy=strategy,
+    #     initial_capital=1000000,
+    #     start_date="2025-01-01",
+    #     end_date="2026-03-15"
+    # )

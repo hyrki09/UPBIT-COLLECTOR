@@ -31,7 +31,9 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
     df['ma'] = df['close'].rolling(ma_period).mean()
     df['upper'] = df['ma'] * (1 + envelope)
     df['lower'] = df['ma'] * (1 - envelope)
-    df['buy_target'] = df['lower'] * (1 - envelope)
+    # df['buy_target'] = df['lower'] * (1 - envelope)
+    # df['buy_target'] = df['lower'] * (1 - 0.1)
+    df['buy_target'] = 0
 
     # 서브플롯
     fig = make_subplots(
@@ -106,7 +108,6 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
 
         for t in trades:
             date = pd.Timestamp(t['date'])
-            print(date, type(date))
             if '매수' in t['action']:
                 buy_dates.append(date)
                 buy_prices.append(t['price'])
@@ -122,53 +123,76 @@ def draw_envelope_chart(ticker, ma_period=10, envelope=0.10,
                 stop_texts.append(
                     f"{t['action']}<br>{t['price']:,}원<br>{t['profit']}%")
 
-        # 매수 표시 (초록 삼각형 위)
-        if buy_dates:
+    # 매수 표시 (초록 가로선)
+    if buy_dates:
+        for date, price, text in zip(buy_dates, buy_prices, buy_texts):
             fig.add_trace(
                 go.Scatter(
-                    x=buy_dates,
-                    y=[p * 0.97 for p in buy_prices],  # 캔들 아래
+                    x=[date],
+                    y=[price],
                     mode='markers+text',
-                    marker=dict(symbol='triangle-up', size=12, color='green'),
-                    text=buy_texts,
-                    textposition='bottom center',
+                    marker=dict(
+                        symbol='line-ew',  # 가로선 마커
+                        size=15,
+                        color='green',
+                        line=dict(color='green', width=3)
+                    ),
+                    text=['-'],
+                    textposition='middle center',
                     name='매수',
-                    hovertext=buy_texts
+                    hovertext=text,
+                    hoverinfo='text',
+                    showlegend=False
                 ),
                 row=1, col=1
             )
 
-        # 익절 표시 (빨간 삼각형 아래)
-        if sell_dates:
+    # 익절 표시 (노란 가로선)
+    if sell_dates:
+        for date, price, text in zip(sell_dates, sell_prices, sell_texts):
             fig.add_trace(
                 go.Scatter(
-                    x=sell_dates,
-                    y=[p * 1.03 for p in sell_prices],  # 캔들 위
+                    x=[date],
+                    y=[price],
                     mode='markers+text',
-                    marker=dict(symbol='triangle-down', size=12, color='red'),
-                    text=sell_texts,
-                    textposition='top center',
+                    marker=dict(
+                        symbol='line-ew',
+                        size=15,
+                        color='yellow',
+                        line=dict(color='yellow', width=3)
+                    ),
+                    text=['-'],
+                    textposition='middle center',
                     name='익절',
-                    hovertext=sell_texts
+                    hovertext=text,
+                    hoverinfo='text',
+                    showlegend=False
                 ),
                 row=1, col=1
             )
+    ## 손절이 이상하게 나옴 확인하기~~~~~~~
 
-        # 손절 표시 (검정 삼각형)
-        if stop_dates:
-            fig.add_trace(
-                go.Scatter(
-                    x=stop_dates,
-                    y=[p * 1.03 for p in stop_prices],
-                    mode='markers+text',
-                    marker=dict(symbol='triangle-down', size=12, color='black'),
-                    text=stop_texts,
-                    textposition='top center',
-                    name='손절',
-                    hovertext=stop_texts
+    # 손절 표시 (검정 삼각형)
+    if stop_dates:
+        fig.add_trace(
+            go.Scatter(
+                x=stop_dates,
+                y=[p * 1.06 for p in stop_prices],
+                mode='markers',  # 텍스트 제거
+                marker=dict(
+                        symbol='line-ew',
+                        size=15,
+                        color='white',
+                        line=dict(color='white', width=3)
                 ),
-                row=1, col=1
-            )
+                    # symbol='triangle-down', size=12, color='white')
+                    
+                name='손절',
+                hovertext=stop_texts,
+                hoverinfo='text'
+            ),
+            row=1, col=1
+        )
 
     # 레이아웃
     fig.update_layout(
@@ -202,7 +226,7 @@ if __name__ == "__main__":
     from core.backtest import Backtest
     from strategies.down_coin import DownCoinStrategy
 
-    strategy = DownCoinStrategy(ma_period=10, envelope=0.10, stage_ratio=0.05)
+    strategy = DownCoinStrategy(ma_period=20, envelope=0.20, stage_ratio=0.05)
     bt = Backtest(
         strategy=strategy,
         ticker="KRW-XRP",

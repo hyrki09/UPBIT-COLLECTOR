@@ -9,7 +9,6 @@ import json
 import time
 from datetime import datetime, date
 from core.order import OrderManager
-from strategies.base import BaseStrategy
 from utils.logger import Logger
 from utils.telegram import TelegramNotifier
 
@@ -24,46 +23,35 @@ class TradingBot:
 
     def __init__(self, upbit: pyupbit.Upbit,
                 strategies: dict,
-                base_capital: float = 1000000,  # ← 기준 자본금
+                base_capital: float = 1000000,
                 scan_interval: int = 10):
         self.upbit = upbit
         self.strategies = strategies
-        self.base_capital = base_capital  # ← 기준 자본금 고정
+        self.base_capital = base_capital
         self.scan_interval = scan_interval
         self.order_manager = OrderManager(upbit)
         self.watchlist_file = "watchlist.json"
 
-        # 포지션 관리
         self.positions = {}
         self.initial_capital = None
         self.start_date = date.today()
 
     def get_buy_amount(self, strategy) -> float:
-        """
-        매수 금액 계산
-        기준 자본금 기준으로 계산 + 단위 절사
-        실제 자산이 변해도 기준 자본금으로 고정
-        """
+        """매수 금액 계산 (기준 자본금 + 단위 절사)"""
         stage_ratio = strategy.buy_stages[0]['ratio']
         raw_amount = self.base_capital * stage_ratio
 
-        # 기준 자본금에 따라 단위 결정
-        if self.base_capital >= 10000000:   # 1000만원 이상 → 10만원 단위
+        if self.base_capital >= 10000000:
             unit = 100000
-        elif self.base_capital >= 1000000:  # 100만원 이상  → 1만원 단위
+        elif self.base_capital >= 1000000:
             unit = 10000
-        else:                               # 100만원 미만  → 1000원 단위
+        else:
             unit = 1000
 
-        # 단위로 절사
-        buy_amount = (raw_amount // unit) * unit
-        return buy_amount
+        return (raw_amount // unit) * unit
 
     def can_buy(self, strategy) -> bool:
-        """
-        이 전략으로 1차 매수 가능한지 확인
-        남은 잔고로 전체 차수 투자 가능한지 체크
-        """
+        """잔고로 전체 차수 투자 가능한지 확인"""
         krw = self.order_manager.get_balance_krw()
         buy_amount = self.get_buy_amount(strategy)
         total_stages = len(strategy.buy_stages)
@@ -125,8 +113,16 @@ class TradingBot:
                     if krw < buy_amount:
                         continue
 
-                    buy_target = strategy.get_stage_buy_price(
-                        pos['prev_buy_price'], buy_stage)
+                    # 추가 매수 목표가
+                    df = pyupbit.get_ohlcv(ticker, interval="day", count=50)
+                    buy_target = strategy.get_buy_price(
+                        df=df,
+                        stage=buy_stage,
+                        prev_buy_price=pos['prev_buy_price']
+                    )
+
+                    if not buy_target:
+                        continue
 
                     current_price = pyupbit.get_current_price(ticker)
 
@@ -146,36 +142,36 @@ class TradingBot:
                             pos['sell_stage'] = 0
 
                             logger.info(f"📈 {buy_stage+1}차 매수 주문 | "
-                                    f"{ticker} | {int(buy_target):,}원")
+                                       f"{ticker} | {int(buy_target):,}원")
                             notifier.send_buy(ticker, buy_target,
                                             buy_amount, buy_stage + 1)
                     continue
 
                 # 새 코인 1차 매수
-                # 잔고로 전체 차수 투자 가능한지 확인
                 if not self.can_buy(strategy):
                     logger.info(f"잔고 부족 | {strategy_name} 매수 불가")
                     continue
 
-                # 매수 금액 계산 (단위 절사)
                 buy_amount = self.get_buy_amount(strategy)
-
                 current_price = pyupbit.get_current_price(ticker)
 
                 # ready True → 즉시 지정가 주문
                 if item.get('ready', False):
                     buy_price = item['buy_price']
                     logger.info(f"✅ 즉시 지정가 주문 | {ticker} | "
-                            f"{int(buy_price):,}원")
+                               f"{int(buy_price):,}원")
 
                 # ready False → 실시간 조건 체크
                 else:
                     df = pyupbit.get_ohlcv(ticker, interval="day", count=50)
                     if not strategy.is_ready_to_buy(df, current_price):
                         continue
-                    buy_price = strategy.get_buy_price(df)
+                    buy_price = strategy.get_buy_price(df=df, stage=0,
+                                                       current_price=current_price)
+                    if not buy_price:
+                        continue
                     logger.info(f"📌 조건 충족 지정가 주문 | {ticker} | "
-                            f"{int(buy_price):,}원")
+                               f"{int(buy_price):,}원")
 
                 result = self.order_manager.buy_limit_order(
                     ticker, buy_price, buy_amount)
@@ -189,12 +185,12 @@ class TradingBot:
                         'invested': buy_amount,
                         'sell_stage': 0,
                         'sell_base_qty': qty,
-                        'stage_amount': buy_amount,  # ← 1차 금액 고정
+                        'stage_amount': buy_amount,
                         'prev_buy_price': buy_price,
                         'buy_stage': 1
                     }
                     logger.info(f"📈 1차 매수 주문 | {ticker} | "
-                            f"{int(buy_price):,}원 | {int(buy_amount):,}원")
+                               f"{int(buy_price):,}원 | {int(buy_amount):,}원")
                     notifier.send_buy(ticker, buy_price, buy_amount, 1)
 
     def scan_sell(self):
@@ -241,7 +237,6 @@ class TradingBot:
                     pos['invested'] = pos['total_qty'] * avg_price
                     pos['sell_stage'] += 1
 
-                    # 모든 매도 완료
                     if pos['sell_stage'] >= len(strategy.sell_stages):
                         if pos['total_qty'] > 0:
                             self.order_manager.sell_limit_order(
@@ -266,7 +261,7 @@ class TradingBot:
         logger.info("=== 트레이딩 봇 시작 ===")
         notifier.send(f"🤖 트레이딩 봇 시작!\n"
                      f"초기자산: {int(self.initial_capital):,}원\n"
-                     f"최대 보유: {self.max_holding}개")
+                     f"기준자본금: {int(self.base_capital):,}원")
 
         while True:
             try:

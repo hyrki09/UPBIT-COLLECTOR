@@ -170,13 +170,13 @@ class ScannerBot:
 
 
 if __name__ == "__main__":
-    from strategies.golden_cross import GoldenCrossStrategy
+    # from strategies.golden_cross import GoldenCrossStrategy
+    from strategies.down_coin import DownCoinStrategy
 
     strategies = {
-        'golden_cross': {
-            'strategy': GoldenCrossStrategy(short=5, long=20),
-            'tickers': ["KRW-BTC", "KRW-ETH", "KRW-XRP",
-                       "KRW-SOL", "KRW-ADA", "KRW-DOGE"]
+        'down_coin': {
+            'strategy': DownCoinStrategy(ma_period=20, envelope=0.20, stage_ratio=0.05),
+            'tickers': pyupbit.get_tickers(fiat='KRW')
         }
     }
 

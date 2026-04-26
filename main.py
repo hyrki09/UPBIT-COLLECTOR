@@ -11,7 +11,6 @@ from core.updater import DataUpdater
 from core.backtest import Backtest
 from core.scanner import ScannerBot
 from core.bot import TradingBot
-from strategies.golden_cross import GoldenCrossStrategy
 from strategies.down_coin import DownCoinStrategy
 from utils.telegram import TelegramNotifier
 
@@ -70,7 +69,7 @@ def compare_tickers(tickers, strategy, interval="day",
 
     return results
 
-def run_scanner(strategies, market_ticker="KRW-BTC", scan_interval=3600):
+def run_scanner(strategies, market_ticker="KRW-BTC", scan_interval=600):
     """스캐너 봇 실행"""
     scanner = ScannerBot(
         strategies=strategies,
@@ -79,7 +78,7 @@ def run_scanner(strategies, market_ticker="KRW-BTC", scan_interval=3600):
     )
     scanner.run()
 
-def run_bot(strategies, budget=100000, max_holding=3, scan_interval=10):
+def run_bot(strategies, base_capital=1000000, scan_interval=10):
     """트레이딩 봇 실행"""
     access = os.getenv("UPBIT_ACCESS_KEY")
     secret = os.getenv("UPBIT_SECRET_KEY")
@@ -88,8 +87,7 @@ def run_bot(strategies, budget=100000, max_holding=3, scan_interval=10):
     bot = TradingBot(
         upbit=upbit,
         strategies=strategies,
-        budget=budget,
-        max_holding=max_holding,
+        base_capital=base_capital,
         scan_interval=scan_interval
     )
     bot.run()
@@ -97,64 +95,47 @@ def run_bot(strategies, budget=100000, max_holding=3, scan_interval=10):
 
 if __name__ == "__main__":
     # 전략 설정
-    # strategy = GoldenCrossStrategy(short=5, long=20)
-
-    # strategies = {
-    #     'golden_cross': {
-    #         'strategy': strategy,
-    #         'tickers': ["KRW-BTC", "KRW-ETH", "KRW-XRP",
-    #                    "KRW-SOL", "KRW-ADA", "KRW-DOGE"]
-    #     }
-    # }
-
-    # # 실행 모드 선택
-    # print("=== 업비트 자동매매 ===")
-    # print("1. 데이터 업데이트")
-    # print("2. 백테스트")
-    # print("3. 스캐너 봇")
-    # print("4. 트레이딩 봇")
-    # mode = input("선택: ")
-
-    # if mode == "1":
-    #     update_data()
-
-    # elif mode == "2":
-    #     run_backtest(
-    #         ticker="KRW-BTC",
-    #         strategy=strategy,
-    #         initial_capital=1000000,
-    #         start_date="2025-01-01",
-    #         end_date="2026-03-15"
-    #     )
-
-    # elif mode == "3":
-    #     run_scanner(strategies)
-
-    # elif mode == "4":
-    #     run_bot(
-    #         strategies={'golden_cross': strategy},
-    #         budget=10000,
-    #         max_holding=3,
-    #         scan_interval=10
-    #     )
-
-    strategy = DownCoinStrategy(ma_period=10, envelope=0.10, stage_ratio=0.05)
-
-    run_backtest(
-        ticker="KRW-XRP",
-        strategy=strategy,
-        initial_capital=1000000,
-        start_date="2025-01-01",
-        end_date="2026-04-06"
+    strategy = DownCoinStrategy(
+        ma_period=10,
+        envelope=0.10,
+        stage_ratio=0.05
     )
 
-    # tickers = ["KRW-XRP", "KRW-ETH", "KRW-SOL", 
-    #        "KRW-ADA", "KRW-DOGE", "KRW-LINK"]
+    strategies = {
+        'down_coin': strategy
+    }
 
-    # compare_tickers(
-    #     tickers=tickers,
-    #     strategy=strategy,
-    #     initial_capital=1000000,
-    #     start_date="2025-01-01",
-    #     end_date="2026-03-15"
-    # )
+    scanner_strategies = {
+        'down_coin': {
+            'strategy': strategy,
+            'tickers': pyupbit.get_tickers(fiat="KRW")
+        }
+    }
+
+    print("=== 업비트 자동매매 ===")
+    print("1. 데이터 업데이트")
+    print("2. 백테스트")
+    print("3. 스캐너 봇")
+    print("4. 트레이딩 봇")
+    mode = input("선택: ")
+
+    if mode == "1":
+        update_data()
+
+    elif mode == "2":
+        run_backtest(
+            ticker="KRW-XRP",
+            strategy=strategy,
+            initial_capital=1000000,
+            start_date="2025-01-01"
+        )
+
+    elif mode == "3":
+        run_scanner(scanner_strategies)
+
+    elif mode == "4":
+        run_bot(
+            strategies=strategies,
+            base_capital=1000000,
+            scan_interval=10
+        )

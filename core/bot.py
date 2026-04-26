@@ -84,6 +84,62 @@ class TradingBot:
             return 0.0
         total = self.get_total_asset()
         return (total - self.initial_capital) / self.initial_capital * 100
+    
+    def load_existing_positions(self):
+        """
+        봇 시작 시 기존 보유 코인을 전략 기준으로 등록
+        실제 평단가 + 수량 → 전략 기준 차수 계산
+        """
+        balances = self.upbit.get_balances()
+
+        for b in balances:
+            if b['currency'] == 'KRW':
+                continue
+            if float(b['balance']) <= 0:
+                continue
+
+            ticker = f"KRW-{b['currency']}"
+            avg_buy_price = float(b['avg_buy_price'])
+            qty = float(b['balance'])
+
+            if avg_buy_price == 0:
+                continue
+
+            # 어떤 전략에 속하는지 판단 (지금은 전략 1개 가정)
+            # 추후 멀티 전략이면 어떻게 매핑할지 고민 필요
+            strategy_name = list(self.strategies.keys())[0]
+            strategy = self.strategies[strategy_name]
+
+            # 전략 기준 1차 매수 금액
+            stage_amount = self.get_buy_amount(strategy)
+
+            # 실제 투자 금액
+            invested = avg_buy_price * qty
+
+            # 차수 계산 (몇 번 매수한 것에 해당하나)
+            buy_stage = round(invested / stage_amount)
+            if buy_stage < 1:
+                buy_stage = 1
+            if buy_stage > len(strategy.buy_stages):
+                buy_stage = len(strategy.buy_stages)
+
+            self.positions[ticker] = {
+                'strategy': strategy_name,
+                'avg_buy_price': avg_buy_price,
+                'total_qty': qty,
+                'invested': invested,
+                'sell_stage': 0,
+                'sell_base_qty': qty,
+                'stage_amount': stage_amount,  # 전략 기준 단위!
+                'prev_buy_price': avg_buy_price,
+                'buy_stage': buy_stage
+            }
+
+            logger.info(f"기존 보유 | {ticker} | "
+                    f"평단가: {int(avg_buy_price):,}원 | "
+                    f"수량: {qty} | "
+                    f"투자금: {int(invested):,}원 | "
+                    f"{buy_stage}차 매수 상태로 등록")
 
     def scan_buy(self, watchlist: dict):
         """관심종목 매수 스캔"""
@@ -255,8 +311,9 @@ class TradingBot:
             except Exception as e:
                 logger.error(f"[{ticker}] 매도 스캔 오류: {e}")
 
-    def run(self, daily_loss_limit: float = -10.0):
+    def run(self, daily_loss_limit: float = -100.0):
         """자동매매 메인 루프"""
+        self.load_existing_positions()
         self.initial_capital = self.get_total_asset()
         logger.info("=== 트레이딩 봇 시작 ===")
         notifier.send(f"🤖 트레이딩 봇 시작!\n"

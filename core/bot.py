@@ -92,7 +92,12 @@ class TradingBot:
         """
         balances = self.upbit.get_balances()
 
+        logger.info(f"잔고 조회 결과: {balances}") 
+
         for b in balances:
+
+            if not isinstance(b, dict):
+                continue
             if b['currency'] == 'KRW':
                 continue
             if float(b['balance']) <= 0:
@@ -101,6 +106,8 @@ class TradingBot:
             ticker = f"KRW-{b['currency']}"
             avg_buy_price = float(b['avg_buy_price'])
             qty = float(b['balance'])
+
+            logger.info(f"avg_buy_price | {avg_buy_price} ")
 
             if avg_buy_price == 0:
                 continue
@@ -180,7 +187,12 @@ class TradingBot:
                     if not buy_target:
                         continue
 
-                    current_price = pyupbit.get_current_price(ticker)
+                    # 시세 조회 1
+                    try:
+                        current_price = pyupbit.get_current_price(ticker)
+                    except Exception:
+                        logger.info(f"스킵 | {ticker} | 시세 조회 불가")
+                        continue
 
                     if current_price <= buy_target:
                         result = self.order_manager.buy_limit_order(
@@ -198,7 +210,7 @@ class TradingBot:
                             pos['sell_stage'] = 0
 
                             logger.info(f"📈 {buy_stage+1}차 매수 주문 | "
-                                       f"{ticker} | {int(buy_target):,}원")
+                                    f"{ticker} | {int(buy_target):,}원")
                             notifier.send_buy(ticker, buy_target,
                                             buy_amount, buy_stage + 1)
                     continue
@@ -209,13 +221,19 @@ class TradingBot:
                     continue
 
                 buy_amount = self.get_buy_amount(strategy)
-                current_price = pyupbit.get_current_price(ticker)
+
+                # 시세 조회 2
+                try:
+                    current_price = pyupbit.get_current_price(ticker)
+                except Exception:
+                    logger.info(f"스킵 | {ticker} | 시세 조회 불가")
+                    continue
 
                 # ready True → 즉시 지정가 주문
                 if item.get('ready', False):
                     buy_price = item['buy_price']
                     logger.info(f"✅ 즉시 지정가 주문 | {ticker} | "
-                               f"{int(buy_price):,}원")
+                            f"{int(buy_price):,}원")
 
                 # ready False → 실시간 조건 체크
                 else:
@@ -223,11 +241,11 @@ class TradingBot:
                     if not strategy.is_ready_to_buy(df, current_price):
                         continue
                     buy_price = strategy.get_buy_price(df=df, stage=0,
-                                                       current_price=current_price)
+                                                    current_price=current_price)
                     if not buy_price:
                         continue
                     logger.info(f"📌 조건 충족 지정가 주문 | {ticker} | "
-                               f"{int(buy_price):,}원")
+                            f"{int(buy_price):,}원")
 
                 result = self.order_manager.buy_limit_order(
                     ticker, buy_price, buy_amount)
@@ -246,7 +264,7 @@ class TradingBot:
                         'buy_stage': 1
                     }
                     logger.info(f"📈 1차 매수 주문 | {ticker} | "
-                               f"{int(buy_price):,}원 | {int(buy_amount):,}원")
+                            f"{int(buy_price):,}원 | {int(buy_amount):,}원")
                     notifier.send_buy(ticker, buy_price, buy_amount, 1)
 
     def scan_sell(self):
@@ -258,7 +276,14 @@ class TradingBot:
                 if not strategy:
                     continue
 
-                current_price = pyupbit.get_current_price(ticker)
+                # 시세 조회 (예외 발생 시 포지션 제거)
+                try:
+                    current_price = pyupbit.get_current_price(ticker)
+                except Exception:
+                    logger.info(f"스킵 | {ticker} | 시세 조회 불가 → 포지션 제거")
+                    del self.positions[ticker]
+                    continue
+
                 avg_price = pos['avg_buy_price']
                 sell_stage = pos['sell_stage']
 
@@ -274,8 +299,8 @@ class TradingBot:
 
                 profit = (current_price - avg_price) / avg_price * 100
                 logger.info(f"📊 {ticker} | "
-                           f"현재가: {int(current_price):,}원 | "
-                           f"수익률: {round(profit, 2)}%")
+                        f"현재가: {int(current_price):,}원 | "
+                        f"수익률: {round(profit, 2)}%")
 
                 # 익절
                 if current_price >= sell_target:
@@ -287,7 +312,7 @@ class TradingBot:
                         ticker, sell_target, sell_qty)
                     notifier.send_sell(ticker, sell_target, profit, "익절")
                     logger.info(f"✅ {sell_stage+1}차 익절 주문 | "
-                               f"{ticker} | {int(sell_target):,}원")
+                            f"{ticker} | {int(sell_target):,}원")
 
                     pos['total_qty'] -= sell_qty
                     pos['invested'] = pos['total_qty'] * avg_price
@@ -305,7 +330,7 @@ class TradingBot:
                         ticker, stop_target, pos['total_qty'])
                     notifier.send_sell(ticker, stop_target, profit, "손절")
                     logger.info(f"🛑 손절 주문 | {ticker} | "
-                               f"{int(stop_target):,}원")
+                            f"{int(stop_target):,}원")
                     del self.positions[ticker]
 
             except Exception as e:

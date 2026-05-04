@@ -60,13 +60,56 @@ class TradingBot:
             self.save_positions()
 
     def load_pending_orders(self):
-        """미체결 주문 로드"""
+        """
+        미체결 주문 로드 + 재시작 시 체결 여부 확인
+        """
         if os.path.exists(self.pending_orders_file):
             with open(self.pending_orders_file, 'r') as f:
                 self.pending_orders = json.load(f)
             logger.info(f"미체결 주문 로드: {list(self.pending_orders.keys())}")
+
+            # 재시작 시 각 주문 상태 확인
+            for ticker in list(self.pending_orders.keys()):
+                try:
+                    uuid = self.pending_orders[ticker]['uuid']
+                    order_info = self.upbit.get_order(uuid)
+
+                    if order_info is None:
+                        continue
+
+                    state = order_info.get('state', '')
+
+                    # 체결 완료 → positions로 이동
+                    if state == 'done':
+                        logger.info(f"재시작 시 체결 확인 | {ticker}")
+                        self._on_order_filled(
+                            ticker,
+                            self.pending_orders[ticker],
+                            order_info
+                        )
+                        del self.pending_orders[ticker]
+
+                    # 취소됨 → 제거
+                    elif state == 'cancel':
+                        logger.info(f"재시작 시 취소 확인 | {ticker}")
+                        del self.pending_orders[ticker]
+
+                    # 미체결 → 유지
+                    elif state == 'wait':
+                        logger.info(f"미체결 유지 | {ticker} | "
+                                f"목표가: {int(self.pending_orders[ticker]['buy_price']):,}원")
+
+                except Exception as e:
+                    logger.error(f"[{ticker}] 주문 상태 확인 오류: {e}")
+
+            self.save_pending_orders()
+
         else:
+            # pending_orders.json 없으면 전체 취소!
+            logger.info("pending_orders.json 없음 → 미체결 주문 전체 취소")
             self.pending_orders = {}
+            self.order_manager.cancel_all_orders()  # 전체 취소!
+            self.save_pending_orders()
 
     def load_watchlist(self) -> dict:
         """관심종목 로드"""
@@ -159,6 +202,53 @@ class TradingBot:
                 msg = f"⚠️ 외부 매수 감지: {bought_externally}"
                 logger.warning(msg)
                 notifier.send(msg)
+
+                for b in balances:
+                    if not isinstance(b, dict):
+                        continue
+                    currency = b.get('currency', '')
+                    ticker = f"KRW-{currency}"
+
+                    # bought_externally에 있는 코인만!
+                    if ticker not in bought_externally:
+                        continue
+
+                    avg_buy_price = float(b.get('avg_buy_price', 0))
+                    qty = float(b.get('balance', 0))
+
+                    if avg_buy_price == 0 or qty <= 0:
+                        continue
+
+                    try:
+                        price = pyupbit.get_current_price(ticker)
+                        if price is None:
+                            continue
+                    except:
+                        continue
+
+                    strategy_name = list(self.strategies.keys())[0]
+                    strategy = self.strategies[strategy_name]
+                    stage_amount = self.get_buy_amount(strategy)
+                    invested = avg_buy_price * qty
+                    buy_stage = round(invested / stage_amount)
+                    buy_stage = max(1, min(buy_stage, len(strategy.buy_stages)))
+
+                    self.positions[ticker] = {
+                        'strategy': strategy_name,
+                        'avg_buy_price': avg_buy_price,
+                        'total_qty': qty,
+                        'invested': invested,
+                        'sell_stage': 0,
+                        'sell_base_qty': qty,
+                        'stage_amount': stage_amount,
+                        'prev_buy_price': avg_buy_price,
+                        'buy_stage': buy_stage
+                    }
+                    logger.info(f"외부 매수 코인 등록 | {ticker} | "
+                            f"평단가: {int(avg_buy_price):,}원 | "
+                            f"{buy_stage}차 매수 상태로 등록")
+
+                self.save_positions()
 
         except Exception as e:
             logger.error(f"포지션 검증 오류: {e}")

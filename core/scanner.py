@@ -9,7 +9,6 @@ import pandas as pd
 import json
 import time
 from datetime import datetime
-from strategies.base import BaseStrategy
 from utils.logger import Logger
 from utils.telegram import TelegramNotifier
 
@@ -25,22 +24,13 @@ class ScannerBot:
 
     def __init__(self, strategies: dict,
                  market_ticker: str = "KRW-BTC",
-                 scan_interval: int = 600):
-        """
-        strategies: 전략별 설정
-        {
-            'golden_cross': {
-                'strategy': GoldenCrossStrategy(),
-                'tickers': ['KRW-BTC', 'KRW-ETH']  # None이면 전체
-            }
-        }
-        market_ticker: 시장 기준 티커 (글로벌 전제조건용)
-        scan_interval: 스캔 주기 (초) 기본 10분
-        """
+                 scan_interval: int = 300):  # 기본 5분
         self.strategies = strategies
         self.market_ticker = market_ticker
         self.scan_interval = scan_interval
         self.watchlist_file = "watchlist.json"
+        self.positions_file = "positions.json"
+        self.pending_orders_file = "pending_orders.json"
 
     def load_watchlist(self) -> dict:
         """관심종목 파일 불러오기"""
@@ -54,6 +44,20 @@ class ScannerBot:
         with open(self.watchlist_file, 'w') as f:
             json.dump(watchlist, f, ensure_ascii=False, indent=2)
 
+    def load_positions(self) -> dict:
+        """봇의 보유 코인 로드"""
+        if os.path.exists(self.positions_file):
+            with open(self.positions_file, 'r') as f:
+                return json.load(f)
+        return {}
+
+    def load_pending_orders(self) -> dict:
+        """봇의 미체결 주문 로드"""
+        if os.path.exists(self.pending_orders_file):
+            with open(self.pending_orders_file, 'r') as f:
+                return json.load(f)
+        return {}
+
     def get_market_df(self) -> pd.DataFrame:
         """시장 기준 데이터 가져오기 (BTC)"""
         try:
@@ -66,7 +70,12 @@ class ScannerBot:
         """전체 코인 스캔 → 관심종목 선별"""
         watchlist = {}
 
-        # 시장 기준 데이터 (BTC) 가져오기
+        # 보유 코인 + 미체결 주문 코인 제외 목록
+        positions = self.load_positions()
+        pending_orders = self.load_pending_orders()
+        exclude_tickers = set(positions.keys()) | set(pending_orders.keys())
+
+        # 시장 기준 데이터 (BTC)
         market_df = self.get_market_df()
 
         for strategy_name, config in self.strategies.items():
@@ -78,28 +87,35 @@ class ScannerBot:
 
             for ticker in tickers:
                 try:
+                    # 보유 중이거나 주문 중인 코인 제외
+                    if ticker in exclude_tickers:
+                        continue
+
                     df = pyupbit.get_ohlcv(ticker, interval="day", count=200)
                     if df is None:
                         continue
 
                     df = strategy.prepare(df)
 
-                    # 전제조건 확인
+                    # 전제조건 확인 (BTC 조건)
                     if not strategy.check_precondition(df, market_df):
                         continue
 
                     current_price = pyupbit.get_current_price(ticker)
+                    if current_price is None:
+                        continue
 
-                    # 관심종목 조건 확인 (전략에서 정의)
+                    # 관심종목 조건 확인
                     if not strategy.is_watchable(df, current_price):
                         continue
 
                     # 매수 목표가 계산
                     buy_price = strategy.get_buy_price(df)
+                    if not buy_price:
+                        continue
 
-                    # 지정가 주문 조건 확인
+                    # 즉시 주문 조건 확인
                     ready = strategy.is_ready_to_buy(df, current_price)
-
                     diff = (current_price - buy_price) / buy_price * 100
 
                     watchlist[strategy_name].append({
@@ -107,7 +123,7 @@ class ScannerBot:
                         'buy_price': round(buy_price, 0),
                         'current_price': current_price,
                         'diff': round(diff, 2),
-                        'ready': ready  # True: 즉시 주문, False: 모니터링
+                        'ready': ready
                     })
 
                     status = "✅ 즉시 주문" if ready else "📌 모니터링"
@@ -170,12 +186,15 @@ class ScannerBot:
 
 
 if __name__ == "__main__":
-    # from strategies.golden_cross import GoldenCrossStrategy
     from strategies.down_coin import DownCoinStrategy
 
     strategies = {
         'down_coin': {
-            'strategy': DownCoinStrategy(ma_period=20, envelope=0.20, stage_ratio=0.05),
+            'strategy': DownCoinStrategy(
+                ma_period=10,
+                envelope=0.10,
+                stage_ratio=0.05
+            ),
             'tickers': pyupbit.get_tickers(fiat='KRW')
         }
     }
@@ -183,6 +202,6 @@ if __name__ == "__main__":
     scanner = ScannerBot(
         strategies=strategies,
         market_ticker="KRW-BTC",
-        scan_interval=600
+        scan_interval=300  # 5분마다
     )
     scanner.run()

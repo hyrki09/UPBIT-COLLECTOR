@@ -338,19 +338,12 @@ class TradingBot:
 
     # ========== 스캔 함수 ==========
 
-    def scan_orders(self, watchlist: dict):
+    def scan_orders(self):
         """
         미체결 주문 모니터링
         1. 체결됐으면 positions 등록
-        2. watchlist에서 사라졌으면 주문 취소
+        2. watchlist에 없으면 주문 취소
         """
-        # watchlist에 있는 티커 목록
-        watchlist_tickers = []
-        for key, items in watchlist.items():
-            if key == 'updated_at':
-                continue
-            if isinstance(items, list):
-                watchlist_tickers += [i['ticker'] for i in items]
 
         for ticker in list(self.pending_orders.keys()):
             try:
@@ -364,14 +357,14 @@ class TradingBot:
 
                 state = order_info.get('state', '')
 
-                # 체결 완료
+                # 체결 완료 → positions 등록
                 if state == 'done':
                     self._on_order_filled(ticker, order, order_info)
                     del self.pending_orders[ticker]
                     self.save_pending_orders()
                     logger.info(f"✅ 주문 체결 | {ticker}")
 
-                # 취소됨
+                # 취소됨 → 제거
                 elif state == 'cancel':
                     del self.pending_orders[ticker]
                     self.save_pending_orders()
@@ -379,83 +372,28 @@ class TradingBot:
 
                 # 미체결 → watchlist 체크
                 elif state == 'wait':
-                    # positions에 있는 코인 (추가 매수 주문)
-                    # → watchlist 상관없이 유지
-                    if ticker in self.positions:
-                        continue
+                    try:
+                        current_price = pyupbit.get_current_price(ticker)
+                        buy_price = order['buy_price']
+                        diff = (current_price - buy_price) / buy_price * 100
 
-                    # 새 코인 (1차 매수 주문)
-                    # → watchlist에서 사라지면 취소
-                    if ticker not in watchlist_tickers:
-                        self.order_manager.cancel_order(uuid)
-                        del self.pending_orders[ticker]
-                        self.save_pending_orders()
-                        logger.info(f"주문 취소 | {ticker} | "
-                                   f"바운더리 이탈")
+                        # 7% 초과면 취소
+                        if diff > 7.0:
+                            self.order_manager.cancel_order(uuid)
+                            del self.pending_orders[ticker]
+                            self.save_pending_orders()
+                            logger.info(f"주문 취소 | {ticker} | 바운더리 이탈")
+                            notifier.send(f"🚫 주문 취소 | {ticker} | 바운더리 이탈")
+                    except:
+                        pass
 
             except Exception as e:
                 logger.error(f"[{ticker}] 주문 체크 오류: {e}")
 
     def scan_buy(self, watchlist: dict):
-        """매수 스캔"""
+        """매수 스캔 - watchlist에 있으면 무조건 주문"""
         krw = self.order_manager.get_balance_krw()
 
-        # 1부: 보유 코인 추가 매수 (watchlist 무관!)
-        for ticker, pos in list(self.positions.items()):
-            try:
-                # 이미 주문 걸린 코인 스킵
-                if ticker in self.pending_orders:
-                    continue
-
-                strategy = self.strategies.get(pos['strategy'])
-                if not strategy:
-                    continue
-
-                buy_stage = pos['buy_stage']
-                if buy_stage >= len(strategy.buy_stages):
-                    continue
-
-                buy_amount = pos['stage_amount']
-                if krw < buy_amount:
-                    continue
-
-                df = pyupbit.get_ohlcv(ticker, interval="day", count=50)
-                buy_target = strategy.get_buy_price(
-                    df=df,
-                    stage=buy_stage,
-                    prev_buy_price=pos['prev_buy_price']
-                )
-                if not buy_target:
-                    continue
-
-                try:
-                    current_price = pyupbit.get_current_price(ticker)
-                except:
-                    continue
-
-                # 매수 목표가 5% 이내면 주문
-                diff = (current_price - buy_target) / buy_target * 100
-                if diff <= 5.0:
-                    result = self.order_manager.buy_limit_order(
-                        ticker, buy_target, buy_amount)
-
-                    if result:
-                        self.pending_orders[ticker] = {
-                            'uuid': result['uuid'],
-                            'buy_price': buy_target,
-                            'buy_amount': buy_amount,
-                            'strategy': pos['strategy'],
-                            'buy_stage': buy_stage,
-                            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        }
-                        self.save_pending_orders()
-                        logger.info(f"📈 {buy_stage+1}차 매수 주문 | "
-                                   f"{ticker} | {int(buy_target):,}원")
-
-            except Exception as e:
-                logger.error(f"[{ticker}] 추가 매수 오류: {e}")
-
-        # 2부: 새 코인 1차 매수 (watchlist 기반)
         for strategy_name, items in watchlist.items():
             if strategy_name == 'updated_at':
                 continue
@@ -466,68 +404,40 @@ class TradingBot:
 
             for item in items:
                 ticker = item['ticker']
+                buy_stage = item.get('buy_stage', 0)
+                buy_price = item['buy_price']
+                buy_amount = self.get_buy_amount(strategy)
 
-                # 이미 보유 or 주문 중인 코인 스킵
-                if ticker in self.positions:
-                    continue
+                # 이미 주문 중인 코인 스킵
                 if ticker in self.pending_orders:
                     continue
 
+                # 잔고 확인
+                if krw < buy_amount:
+                    continue
+
                 if not self.can_buy(strategy):
+                    logger.info(f"잔고 부족 | {strategy_name} 매수 불가")
                     continue
 
-                buy_amount = self.get_buy_amount(strategy)
-                buy_price = item['buy_price']
+                # 주문!
+                result = self.order_manager.buy_limit_order(
+                    ticker, buy_price, buy_amount)
 
-                try:
-                    current_price = pyupbit.get_current_price(ticker)
-                except:
-                    continue
-
-                # ready True → 즉시 주문
-                if item.get('ready', False):
-                    result = self.order_manager.buy_limit_order(
-                        ticker, buy_price, buy_amount)
-
-                    if result:
-                        self.pending_orders[ticker] = {
-                            'uuid': result['uuid'],
-                            'buy_price': buy_price,
-                            'buy_amount': buy_amount,
-                            'strategy': strategy_name,
-                            'buy_stage': 0,
-                            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        }
-                        self.save_pending_orders()
-                        logger.info(f"✅ 1차 매수 주문 | {ticker} | "
-                                   f"{int(buy_price):,}원")
-
-                # ready False → 실시간 조건 체크
-                else:
-                    df = pyupbit.get_ohlcv(ticker, interval="day", count=50)
-                    if not strategy.is_ready_to_buy(df, current_price):
-                        continue
-
-                    buy_price = strategy.get_buy_price(
-                        df=df, stage=0, current_price=current_price)
-                    if not buy_price:
-                        continue
-
-                    result = self.order_manager.buy_limit_order(
-                        ticker, buy_price, buy_amount)
-
-                    if result:
-                        self.pending_orders[ticker] = {
-                            'uuid': result['uuid'],
-                            'buy_price': buy_price,
-                            'buy_amount': buy_amount,
-                            'strategy': strategy_name,
-                            'buy_stage': 0,
-                            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        }
-                        self.save_pending_orders()
-                        logger.info(f"📌 1차 매수 주문 | {ticker} | "
-                                   f"{int(buy_price):,}원")
+                if result:
+                    self.pending_orders[ticker] = {
+                        'uuid': result['uuid'],
+                        'buy_price': buy_price,
+                        'buy_amount': buy_amount,
+                        'strategy': strategy_name,
+                        'buy_stage': buy_stage,
+                        'prev_buy_price': item.get('prev_buy_price'),
+                        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    self.save_pending_orders()
+                    logger.info(f"📈 {buy_stage+1}차 매수 주문 | "
+                            f"{ticker} | {int(buy_price):,}원")
+                    notifier.send_buy(ticker, buy_price, buy_amount, buy_stage + 1)
 
     def scan_sell(self):
         """매도 스캔"""
@@ -616,6 +526,7 @@ class TradingBot:
             try:
                 if date.today() != self.start_date:
                     self.initial_capital = self.get_total_asset()
+                    self.base_capital = self.initial_capital 
                     self.start_date = date.today()
                     logger.info("📅 날짜 변경 - 초기자산 초기화")
 
@@ -633,7 +544,7 @@ class TradingBot:
 
                 watchlist = self.load_watchlist()
 
-                self.scan_orders(watchlist)  # 1. 미체결 주문 체크
+                self.scan_orders()  # 1. 미체결 주문 체크
                 self.scan_sell()             # 2. 매도 체크
                 self.scan_buy(watchlist)     # 3. 매수 체크
 

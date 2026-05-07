@@ -69,7 +69,7 @@ def compare_tickers(tickers, strategy, interval="day",
 
     return results
 
-def run_scanner(strategies, market_ticker="KRW-BTC", scan_interval=600):
+def run_scanner(strategies, market_ticker="KRW-BTC", scan_interval=10):
     """스캐너 봇 실행"""
     scanner = ScannerBot(
         strategies=strategies,

@@ -407,6 +407,7 @@ class TradingBot:
                 buy_stage = item.get('buy_stage', 0)
                 buy_price = item['buy_price']
                 buy_amount = self.get_buy_amount(strategy)
+                current_price = item.get('current_price', buy_price)
 
                 # 이미 주문 중인 코인 스킵
                 if ticker in self.pending_orders:
@@ -420,14 +421,16 @@ class TradingBot:
                     logger.info(f"잔고 부족 | {strategy_name} 매수 불가")
                     continue
 
+                actual_buy_price = min(buy_price, current_price)
+
                 # 주문!
                 result = self.order_manager.buy_limit_order(
-                    ticker, buy_price, buy_amount)
+                    ticker, actual_buy_price, buy_amount)
 
                 if result:
                     self.pending_orders[ticker] = {
                         'uuid': result['uuid'],
-                        'buy_price': buy_price,
+                        'buy_price': actual_buy_price,
                         'buy_amount': buy_amount,
                         'strategy': strategy_name,
                         'buy_stage': buy_stage,
@@ -436,8 +439,8 @@ class TradingBot:
                     }
                     self.save_pending_orders()
                     logger.info(f"📈 {buy_stage+1}차 매수 주문 | "
-                            f"{ticker} | {int(buy_price):,}원")
-                    notifier.send_buy(ticker, buy_price, buy_amount, buy_stage + 1)
+                            f"{ticker} | {int(actual_buy_price):,}원")
+                    notifier.send_buy(ticker, actual_buy_price, buy_amount, buy_stage + 1)
 
     def scan_sell(self):
         """매도 스캔"""
